@@ -187,6 +187,7 @@ static status_t manage_route(private_kernel_vpp_net_t *this, bool add,
     }
     free(out);
 #endif
+    DBG1(DBG_KNL, "NORMALLY this would be inserting a route, but we're skipping that.");
     return SUCCESS;
 }
 
