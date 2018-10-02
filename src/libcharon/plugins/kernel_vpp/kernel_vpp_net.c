@@ -120,6 +120,7 @@ static status_t manage_route(private_kernel_vpp_net_t *this, bool add,
                              chunk_t dst, uint8_t prefixlen, host_t *gtw,
                              char *name)
 {
+#if 0
     char *out;
     int out_len;
     enumerator_t *enumerator;
@@ -185,6 +186,7 @@ static status_t manage_route(private_kernel_vpp_net_t *this, bool add,
         return FAILED;
     }
     free(out);
+#endif
     return SUCCESS;
 }
 
