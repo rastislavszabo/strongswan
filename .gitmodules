@@ -1,0 +1,6 @@
+[submodule "third_party/grpc-c"]
+	path = third_party/grpc-c
+	url = https://github.com/Juniper/grpc-c
+[submodule "third_party/vpp-agent"]
+	path = third_party/vpp-agent
+	url = https://github.com/ligato/vpp-agent
