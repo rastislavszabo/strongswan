@@ -2,6 +2,7 @@ AM_CPPFLAGS = \
     -I${linux_headers} \
     -I$(top_srcdir)/src/libstrongswan \
     -I$(top_srcdir)/src/libcharon
+	-I$(top_srcdir)/third_party
 
 AM_CFLAGS = \
     $(PLUGIN_CFLAGS)
@@ -18,5 +19,7 @@ libstrongswan_kernel_vpp_la_SOURCES = \
     kernel_vpp_net.h kernel_vpp_net.c \
     kernel_vpp_shared.h kernel_vpp_shared.c
 
-libstrongswan_kernel_vpp_la_LDFLAGS = -module -avoid-version
-libstrongswan_kernel_vpp_la_LIBADD = -lvlibmemoryclient -lsvm -lvppinfra -lvlib
+libstrongswan_kernel_vpp_la_LDFLAGS = -module -avoid-version \
+	-L$(top_srcdir)/third_party/grpc-c/build/lib
+
+libstrongswan_kernel_vpp_la_LIBADD = -lgrpc -lgpr -lgrpc-c -lprotobuf-c -lprotobuf
