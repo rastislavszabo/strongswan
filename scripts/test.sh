@@ -225,7 +225,7 @@ vpp)
 		curl wget iproute2 iputils-ping inetutils-traceroute \
 		openssl python libapr1 libnuma1 libmbedtls10 libmbedx509-0 \
 		ethtool netcat-openbsd
-	sudo curl -s https://packagecloud.io/install/repositories/fdio/${REPO}/script.deb.sh | sudo bash
+	sudo curl -s https://packagecloud.io/install/repositories/fdio/release/script.deb.sh | sudo bash
 	sudo apt-get update
 	sudo apt-get -y install vpp=18.10-release vpp-plugins=18.10-release vpp-api-python=18.10-release vpp-lib=18.10-release vpp-dev=18.10-release
 	CONFIG="--enable-libipsec --enable-socket-vpp --enable-kernel-vpp"
