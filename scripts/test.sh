@@ -221,7 +221,7 @@ apidoc)
 	TARGET=apidoc
 	;;
 vpp)
-	apt-get install -y \
+	sudo apt-get install -y \
 		curl wget iproute2 iputils-ping inetutils-traceroute \
 		openssl python libapr1 libnuma1 libmbedcrypto1 libmbedtls10 libmbedx509-0 \
 		ethtool \
