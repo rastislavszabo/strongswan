@@ -37,8 +37,3 @@ env:
     - MONOLITHIC=no
   matrix:
     - TEST=vpp
-
-matrix:
-  include:
-    - compiler: gcc
-      env: TEST=coverage
