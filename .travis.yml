@@ -36,4 +36,6 @@ env:
     - LEAK_DETECTIVE=no
     - MONOLITHIC=no
   matrix:
-    - TEST=vpp
+    - TEST=vpp VPP_RELEASE=18.10
+    - TEST=vpp VPP_RELEASE=18.07.1
+    - TEST=vpp VPP_RELEASE=master
