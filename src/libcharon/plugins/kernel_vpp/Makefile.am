@@ -1,8 +1,8 @@
 AM_CPPFLAGS = \
     -I${linux_headers} \
     -I$(top_srcdir)/src/libstrongswan \
-    -I$(top_srcdir)/src/libcharon
-	-I$(top_srcdir)/third_party
+    -I$(top_srcdir)/src/libcharon \
+	-I$(top_srcdir)/third_party/vpp_agent_c_api
 
 AM_CFLAGS = \
     $(PLUGIN_CFLAGS)
@@ -15,9 +15,9 @@ endif
 
 libstrongswan_kernel_vpp_la_SOURCES = \
     kernel_vpp_plugin.h kernel_vpp_plugin.c \
-    kernel_vpp_ipsec.h kernel_vpp_ipsec.c \
     kernel_vpp_net.h kernel_vpp_net.c \
-    kernel_vpp_shared.h kernel_vpp_shared.c
+    kernel_vpp_shared.h kernel_vpp_shared.c \
+    # kernel_vpp_ipsec.h kernel_vpp_ipsec.c
 
 libstrongswan_kernel_vpp_la_LDFLAGS = -module -avoid-version \
 	-L$(top_srcdir)/third_party/grpc-c/build/lib

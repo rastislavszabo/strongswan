@@ -24,15 +24,6 @@
 #include <threading/thread.h>
 #include <kernel_vpp_shared.h>
 #include <ip_packet.h>
-#include <vlibapi/api.h>
-#include <vlibmemory/api.h>
-#include <vpp/api/vpe_msg_enum.h>
-
-#define vl_typedefs
-#define vl_endianfun
-#include <vpp/api/vpe_all_api_h.h>
-#undef vl_typedefs
-#undef vl_endianfun
 
 #define READ_PATH "/tmp/strongswan-uds-socket"
 
@@ -277,6 +268,7 @@ METHOD(socket_t, destroy, void,
  */
 socket_vpp_socket_t *socket_vpp_socket_create()
 {
+#if 0
     private_socket_vpp_socket_t *this;
     char *read_path, *out;
     int out_len;
@@ -364,4 +356,5 @@ socket_vpp_socket_t *socket_vpp_socket_create()
         return NULL;
     }
     return &this->public;
+#endif
 }
