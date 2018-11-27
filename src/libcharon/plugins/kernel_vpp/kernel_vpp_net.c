@@ -14,18 +14,10 @@
  * limitations under the License.
  */
 #include <utils/debug.h>
-#include <vlibapi/api.h>
-#include <vlibmemory/api.h>
-#include <vpp/api/vpe_msg_enum.h>
 #include <threading/thread.h>
 #include <threading/mutex.h>
 
-#define vl_typedefs
-#define vl_endianfun
-#include <vpp/api/vpe_all_api_h.h>
-#undef vl_typedefs
-#undef vl_endianfun
-
+#include "vpp/model/rpc/rpc.grpc-c.h"
 #include "kernel_vpp_net.h"
 #include "kernel_vpp_shared.h"
 
@@ -135,71 +127,73 @@ static status_t manage_route(private_kernel_vpp_net_t *this, bool add,
                              chunk_t dst, uint8_t prefixlen, host_t *gtw,
                              char *name)
 {
-    char *out;
-    int out_len;
-    enumerator_t *enumerator;
-    iface_t *entry;
-    vl_api_ip_add_del_route_t *mp;
-    vl_api_ip_add_del_route_reply_t *rmp;
-    bool exists = FALSE;
+    int rc;
+    host_t *dst_ip_addr;
+    int family;
+    char ippref[128];
+    Rpc__DataRequest rq = RPC__DATA_REQUEST__INIT;
+    Rpc__PutResponse *rp;
+    L3__StaticRoutes__Route route = L3__STATIC_ROUTES__ROUTE__INIT;
 
-    this->mutex->lock(this->mutex);
-    enumerator = this->ifaces->create_enumerator(this->ifaces);
-    while (enumerator->enumerate(enumerator, &entry))
+    if (dst.len == 4)
     {
-        if (streq(name, entry->if_name))
-        {
-            exists = TRUE;
-            break;
-        }
+        family = AF_INET;
     }
-    enumerator->destroy(enumerator);
-    this->mutex->unlock(this->mutex);
-
-    if (!exists)
-        return NOT_FOUND;
-
-    mp = vl_msg_api_alloc(sizeof(*mp));
-    memset(mp, 0, sizeof(*mp));
-    mp->_vl_msg_id = ntohs(VL_API_IP_ADD_DEL_ROUTE);
-    mp->is_add = add;
-    mp->next_hop_sw_if_index = ntohl(entry->index);
-    mp->dst_address_length = prefixlen;
-    switch (dst.len)
+    else if (dst.len == 16)
     {
-        case 4:
-            mp->is_ipv6 = 0;
-            memcpy(mp->dst_address, dst.ptr, dst.len);
-            break;
-        case 16:
-            mp->is_ipv6 = 1;
-            memcpy(mp->dst_address, dst.ptr, dst.len);
-            break;
-        default:
-            vl_msg_api_free(mp);
-            return FAILED;
+        family = AF_INET6;
     }
+    else
+    {
+        DBG1(DBG_KNL, "cannot determine IP family (length = %d)!", dst.len);
+        return FAILED;
+    }
+
+    dst_ip_addr = host_create_from_chunk(family, dst, 0);
+    if (!dst_ip_addr)
+    {
+        DBG1(DBG_KNL, "cannot build host address!");
+        return FAILED;
+    }
+
+    route.outgoing_interface = name;
+    if (snprintf(ippref, sizeof(ippref), "%H/%d", dst_ip_addr, prefixlen)
+            >= sizeof(ippref))
+    {
+        return FAILED;
+    }
+    route.dst_ip_addr = ippref;
+    dst_ip_addr->destroy(dst_ip_addr);
+
     if (gtw)
     {
-        chunk_t addr = gtw->get_address(gtw);
-        memcpy(mp->next_hop_address, addr.ptr, addr.len);
+        char nh_addr[INET6_ADDRSTRLEN];
+        if (snprintf(nh_addr, sizeof(nh_addr), "%H", gtw) >= sizeof(nh_addr))
+        {
+            return FAILED;
+        }
+        route.next_hop_addr = nh_addr;
     }
-    if (vac->send(vac, (char *)mp, sizeof(*mp), &out, &out_len))
+
+    rq.n_staticroutes = 1;
+    rq.staticroutes = calloc(1, sizeof(L3__StaticRoutes__Route *));
+    rq.staticroutes[0] = &route;
+    if (add)
+    {
+        rc = vac->put(vac, &rq, &rp);
+    }
+    else
+    {
+        rc = vac->del(vac, &rq, &rp);
+    }
+    free(rq.staticroutes);
+
+    if (rc)
     {
         DBG1(DBG_KNL, "vac %sing route failed", add ? "add" : "remov");
-        vl_msg_api_free(mp);
         return FAILED;
     }
-    rmp = (void *)out;
-    vl_msg_api_free(mp);
-    if (rmp->retval)
-    {
-        DBG1(DBG_KNL, "%s route failed %d", add ? "add" : "delete",
-             ntohl(rmp->retval));
-        free(out);
-        return FAILED;
-    }
-    free(out);
+
     return SUCCESS;
 }
 
@@ -246,6 +240,7 @@ static bool addr_in_subnet(chunk_t addr, int prefix, chunk_t net, int net_len)
 static host_t *get_route(private_kernel_vpp_net_t *this, host_t *dest,
                          int prefix, bool nexthop, char **iface, host_t *src)
 {
+#if 0
     fib_path_t path;
     char *out, *tmp;
     int out_len, i, num;
@@ -377,6 +372,7 @@ static host_t *get_route(private_kernel_vpp_net_t *this, host_t *dest,
 
     free(out);
     return addr;
+#endif
 }
 
 METHOD(enumerator_t, addr_enumerate, bool, addr_enumerator_t *this, va_list args)
@@ -520,6 +516,7 @@ METHOD(kernel_net_t, destroy, void,
  */
 static void update_addrs(private_kernel_vpp_net_t *this, iface_t *entry)
 {
+#if 0
     char *out;
     int out_len, i, num;
     vl_api_ip_address_dump_t *mp;
@@ -564,6 +561,7 @@ static void update_addrs(private_kernel_vpp_net_t *this, iface_t *entry)
     entry->addrs->destroy(entry->addrs);
     entry->addrs = linked_list_create_from_enumerator(addrs->create_enumerator(addrs));
     addrs->destroy(addrs);
+#endif
 }
 
 /**
@@ -571,6 +569,7 @@ static void update_addrs(private_kernel_vpp_net_t *this, iface_t *entry)
  */
 static void event_cb(char *data, int data_len, void *ctx)
 {
+#if 0
     private_kernel_vpp_net_t *this = ctx;
     vl_api_sw_interface_event_t *event;
     iface_t *entry;
@@ -603,6 +602,7 @@ static void event_cb(char *data, int data_len, void *ctx)
     enumerator->destroy(enumerator);
     this->mutex->unlock(this->mutex);
     free(data);
+#endif
 }
 
 /**
@@ -610,6 +610,7 @@ static void event_cb(char *data, int data_len, void *ctx)
  */
 static void *net_update_thread_fn(private_kernel_vpp_net_t *this)
 {
+#if 0
     status_t rv;
     while (1)
     {
@@ -680,6 +681,7 @@ static void *net_update_thread_fn(private_kernel_vpp_net_t *this)
 
         sleep(5);
     }
+#endif
     return NULL;
 }
 

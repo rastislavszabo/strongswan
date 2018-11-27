@@ -47,6 +47,7 @@ coverage/
 .project
 .metadata/
 .settings/
+cscope.*
 /*.config
 /*.creator
 /*.creator.*

@@ -3,7 +3,8 @@ AM_CPPFLAGS = \
     -I$(top_srcdir)/src/libstrongswan \
     -I$(top_srcdir)/src/libcharon/plugins/kernel_vpp \
     -I$(top_srcdir)/src/libcharon \
-    -I$(top_srcdir)/src/libipsec
+    -I$(top_srcdir)/src/libipsec \
+	-I$(top_srcdir)/third_party/vpp_agent_c_api
 
 AM_CFLAGS = \
     $(PLUGIN_CFLAGS)
