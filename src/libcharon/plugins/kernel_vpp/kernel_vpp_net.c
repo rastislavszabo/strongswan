@@ -19,7 +19,7 @@
 
 #include "vpp/model/rpc/rpc.grpc-c.h"
 #include "kernel_vpp_net.h"
-#include "kernel_vpp_shared.h"
+#include "kernel_vpp_grpc.h"
 
 typedef struct private_kernel_vpp_net_t private_kernel_vpp_net_t;
 

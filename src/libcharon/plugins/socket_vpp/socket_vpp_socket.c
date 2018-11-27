@@ -22,7 +22,7 @@
 #include <ipsec.h>
 #include <daemon.h>
 #include <threading/thread.h>
-#include <kernel_vpp_shared.h>
+#include <kernel_vpp_grpc.h>
 #include <ip_packet.h>
 
 #define READ_PATH "/tmp/strongswan-uds-socket"
