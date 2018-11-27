@@ -25,8 +25,8 @@ typedef struct vac_t vac_t;
  */
 struct vac_t {
     void (*destroy)(vac_t *this);
-    status_t (*put)(vac_t *this, Rpc__DataRequest *rq, Rpc__PutResponse *rp);
-    status_t (*del)(vac_t *this, Rpc__DataRequest *rq, Rpc__DelResponse *rp);
+    status_t (*put)(vac_t *this, Rpc__DataRequest *rq, Rpc__PutResponse **rp);
+    status_t (*del)(vac_t *this, Rpc__DataRequest *rq, Rpc__DelResponse **rp);
 };
 
 extern vac_t *vac;

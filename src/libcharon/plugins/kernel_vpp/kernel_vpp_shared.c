@@ -24,6 +24,8 @@
 #include "vpp/model/rpc/rpc.grpc-c.h"
 #include "kernel_vpp_shared.h"
 
+#define VPP_AGENT_DEFAULT_HOST "localhost:9111"
+
 typedef struct private_vac_t private_vac_t;
 
 /**
@@ -43,11 +45,11 @@ struct private_vac_t {
 
     grpc_c_client_t *grpc_client;
 
-    mutex_t *client_mutex;
+    const char *host;
 };
 
 METHOD(vac_t, vac_put, status_t, private_vac_t *this,
-        Rpc__DataRequest *rq, Rpc__PutResponse *rp)
+        Rpc__DataRequest *rq, Rpc__PutResponse **rp)
 {
     int rpc_status = rpc__data_change_service__put (this->grpc_client,
             NULL, /* metadata array */
@@ -61,7 +63,7 @@ METHOD(vac_t, vac_put, status_t, private_vac_t *this,
 }
 
 METHOD(vac_t, vac_del, status_t, private_vac_t *this,
-        Rpc__DataRequest *rq, Rpc__DelResponse *rp)
+        Rpc__DataRequest *rq, Rpc__DelResponse **rp)
 {
     int rpc_status = rpc__data_change_service__del (this->grpc_client,
             NULL, /* metadata array */
@@ -81,7 +83,6 @@ METHOD(vac_t, destroy, void, private_vac_t *this)
 
 vac_t *vac_create(char *name)
 {
-    char *host = "localhost:9111";
     private_vac_t *this;
 
     INIT(this,
@@ -90,13 +91,17 @@ vac_t *vac_create(char *name)
             .del = _vac_del,
             .destroy = _destroy,
         },
+        .host = lib->settings->get_str(lib->settings,
+            "%s.plugins.kernel-vpp.host",
+            VPP_AGENT_DEFAULT_HOST, lib->ns),
     );
 
-    this->grpc_client = grpc_c_client_init_by_host(host, name, NULL, NULL);
+    this->grpc_client = grpc_c_client_init_by_host(this->host,
+            name, NULL, NULL);
 
     if (!this->grpc_client)
     {
-        DBG1(DBG_KNL, "cannot connect to gRPC host: %s!", host);
+        DBG1(DBG_KNL, "cannot connect to gRPC host: %s!", this->host);
         return NULL;
     }
 
