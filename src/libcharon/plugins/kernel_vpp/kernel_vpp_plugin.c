@@ -16,7 +16,7 @@
 #include <utils/debug.h>
 
 #include "kernel_vpp_plugin.h"
-#include "kernel_vpp_shared.h"
+#include "kernel_vpp_grpc.h"
 #include "kernel_vpp_ipsec.h"
 #include "kernel_vpp_net.h"
 

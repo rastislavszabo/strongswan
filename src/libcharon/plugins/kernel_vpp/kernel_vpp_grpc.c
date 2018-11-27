@@ -22,7 +22,7 @@
 #include <collections/hashtable.h>
 
 #include "vpp/model/rpc/rpc.grpc-c.h"
-#include "kernel_vpp_shared.h"
+#include "kernel_vpp_grpc.h"
 
 #define VPP_AGENT_DEFAULT_HOST "localhost:9111"
 
