@@ -132,7 +132,8 @@ static status_t manage_route(private_kernel_vpp_net_t *this, bool add,
     int family;
     char ippref[128];
     Rpc__DataRequest rq = RPC__DATA_REQUEST__INIT;
-    Rpc__PutResponse *rp;
+    Rpc__PutResponse *put_rsp = NULL;
+    Rpc__DelResponse *del_rsp = NULL;
     L3__StaticRoutes__Route route = L3__STATIC_ROUTES__ROUTE__INIT;
 
     if (dst.len == 4)
@@ -180,13 +181,19 @@ static status_t manage_route(private_kernel_vpp_net_t *this, bool add,
     rq.staticroutes[0] = &route;
     if (add)
     {
-        rc = vac->put(vac, &rq, &rp);
+        rc = vac->put(vac, &rq, &put_rsp);
     }
     else
     {
-        rc = vac->del(vac, &rq, &rp);
+        rc = vac->del(vac, &rq, &del_rsp);
     }
     free(rq.staticroutes);
+
+    if (put_rsp)
+        rpc__put_response__free_unpacked(put_rsp, 0);
+
+    if (del_rsp)
+        rpc__del_response__free_unpacked(del_rsp, 0);
 
     if (rc)
     {
