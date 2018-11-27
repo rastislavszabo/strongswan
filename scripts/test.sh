@@ -223,10 +223,10 @@ apidoc)
 vpp)
 	VPP_VERSION="${VPP_VERSION:-18.10}"
 	VPP_BRANCH=""
-	if [ "${VPP_VERSION}" == "master" ] ; then
-		VPP_BRANCH="release"
-	else
+	if test "${VPP_VERSION}" = "master"; then
 		VPP_BRANCH="master"
+	else
+		VPP_BRANCH="release"
 	fi
 	sudo apt-get install -y \
 		curl wget iproute2 iputils-ping inetutils-traceroute \
@@ -234,7 +234,7 @@ vpp)
 		ethtool netcat-openbsd
 	sudo curl -s https://packagecloud.io/install/repositories/fdio/"${VPP_BRANCH}"/script.deb.sh | sudo bash
 	sudo apt-get update
-	if [ "${VPP_BRANCH}" == "master" ] ; then
+	if test "${VPP_BRANCH}" = "master"; then
 		sudo apt-get -y install vpp vpp-plugins vpp-api-python vpp-lib vpp-dev
 	else
 		sudo apt-get -y install vpp="${VPP_VERSION}"-release vpp-plugins="${VPP_VERSION}"-release \
