@@ -27,6 +27,18 @@ struct vac_t {
     void (*destroy)(vac_t *this);
     status_t (*put)(vac_t *this, Rpc__DataRequest *rq, Rpc__PutResponse **rp);
     status_t (*del)(vac_t *this, Rpc__DataRequest *rq, Rpc__DelResponse **rp);
+
+    status_t (*dump_interfaces)(vac_t *this, Rpc__DumpRequest *rq,
+            Rpc__InterfaceResponse **rp);
+
+    status_t (*dump_routes)(vac_t *this, Rpc__DumpRequest *rq,
+            Rpc__RoutesResponse **rp);
+
+    status_t (*dump_fibs)(vac_t *this, Rpc__DumpRequest *rq,
+            Rpc__FibResponse **rp);
+
+    status_t (*dump_ipsec_tunnels)(vac_t *this, Rpc__DumpRequest *rq,
+            Rpc__IPSecTunnelResponse **rp);
 };
 
 extern vac_t *vac;
