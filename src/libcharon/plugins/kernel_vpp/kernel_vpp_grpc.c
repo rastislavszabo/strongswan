@@ -76,6 +76,62 @@ METHOD(vac_t, vac_del, status_t, private_vac_t *this,
     return rpc_status ? FAILED : SUCCESS;
 }
 
+METHOD(vac_t, vac_dump_interfaces, status_t, private_vac_t *this,
+        Rpc__DumpRequest *rq, Rpc__InterfaceResponse **rp)
+{
+    int rpc_status = rpc__data_dump_service__dump_interfaces(this->grpc_client,
+            NULL, /* metadata array */
+            0, /* flags */
+            rq,
+            rp,
+            NULL /* status */,
+            -1 /* timeout */);
+    return rpc_status ? FAILED : SUCCESS;
+}
+
+METHOD(vac_t, vac_dump_routes, status_t, private_vac_t *this,
+        Rpc__DumpRequest *rq, Rpc__RoutesResponse **rp)
+{
+    int rpc_status = rpc__data_dump_service__dump_routes(
+            this->grpc_client,
+            NULL, /* metadata array */
+            0, /* flags */
+            rq,
+            rp,
+            NULL /* status */,
+            -1 /* timeout */);
+    return rpc_status ? FAILED : SUCCESS;
+}
+
+METHOD(vac_t, vac_dump_fibs, status_t, private_vac_t *this,
+        Rpc__DumpRequest *rq, Rpc__FibResponse **rp)
+{
+    int rpc_status = rpc__data_dump_service__dump_fibs(
+            this->grpc_client,
+            NULL, /* metadata array */
+            0, /* flags */
+            rq,
+            rp,
+            NULL /* status */,
+            -1 /* timeout */);
+    return rpc_status ? FAILED : SUCCESS;
+}
+
+METHOD(vac_t, vac_dump_ipsec_tunnels, status_t, private_vac_t *this,
+        Rpc__DumpRequest *rq, Rpc__IPSecTunnelResponse **rp)
+{
+    int rpc_status = rpc__data_dump_service__dump_ipsec_tunnels(
+            this->grpc_client,
+            NULL, /* metadata array */
+            0, /* flags */
+            rq,
+            rp,
+            NULL /* status */,
+            -1 /* timeout */);
+    return rpc_status ? FAILED : SUCCESS;
+}
+
+
 METHOD(vac_t, destroy, void, private_vac_t *this)
 {
     grpc_c_client_free(this->grpc_client);
@@ -90,6 +146,10 @@ vac_t *vac_create(char *name)
             .put = _vac_put,
             .del = _vac_del,
             .destroy = _destroy,
+            .dump_interfaces = _vac_dump_interfaces,
+            .dump_routes = _vac_dump_routes,
+            .dump_fibs = _vac_dump_fibs,
+            .dump_ipsec_tunnels = _vac_dump_ipsec_tunnels,
         },
         .host = lib->settings->get_str(lib->settings,
             "%s.plugins.kernel-vpp.host",
