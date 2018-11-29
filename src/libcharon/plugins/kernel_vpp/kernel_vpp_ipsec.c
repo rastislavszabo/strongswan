@@ -676,10 +676,10 @@ static status_t manage_policy(private_kernel_vpp_ipsec_t *this, bool add,
     {
         dst_from = id->src_ts->get_from_address(id->src_ts);
         dst_to = id->src_ts->get_to_address(id->src_ts);
-        dst = host_create_from_chunk(mp->is_ipv6 ? AF_INET6 : AF_INET, src_to, 0);
+        dst = host_create_from_chunk(mp->is_ipv6 ? AF_INET6 : AF_INET, dst_to, 0);
         src_from = id->dst_ts->get_from_address(id->dst_ts);
         src_to = id->dst_ts->get_to_address(id->dst_ts);
-        src = host_create_from_chunk(mp->is_ipv6 ? AF_INET6 : AF_INET, dst_to, 0);
+        src = host_create_from_chunk(mp->is_ipv6 ? AF_INET6 : AF_INET, src_to, 0);
     }
 
     if (src->is_anyaddr(src) && dst->is_anyaddr(dst))
