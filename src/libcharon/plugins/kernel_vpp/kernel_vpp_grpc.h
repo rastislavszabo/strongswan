@@ -39,6 +39,9 @@ struct vac_t {
 
     status_t (*dump_ipsec_tunnels)(vac_t *this, Rpc__DumpRequest *rq,
             Rpc__IPSecTunnelResponse **rp);
+
+    status_t (*register_events)(vac_t *this, Rpc__NotificationRequest *rq,
+            grpc_c_client_callback_t *cb, void *tag);
 };
 
 extern vac_t *vac;
