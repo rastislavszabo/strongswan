@@ -131,6 +131,19 @@ METHOD(vac_t, vac_dump_ipsec_tunnels, status_t, private_vac_t *this,
     return rpc_status ? FAILED : SUCCESS;
 }
 
+METHOD(vac_t, vac_register_events, status_t, private_vac_t *this,
+        Rpc__NotificationRequest *rq, grpc_c_client_callback_t *cb,
+        void *tag)
+{
+    int rpc_status = rpc__notification_service__get__async(
+            this->grpc_client,
+            NULL, /* metadata array */
+            0, /* flags */
+            rq,
+            cb,
+            tag);
+    return rpc_status ? FAILED : SUCCESS;
+}
 
 METHOD(vac_t, destroy, void, private_vac_t *this)
 {
@@ -150,12 +163,14 @@ vac_t *vac_create(char *name)
             .dump_routes = _vac_dump_routes,
             .dump_fibs = _vac_dump_fibs,
             .dump_ipsec_tunnels = _vac_dump_ipsec_tunnels,
+            .register_events = _vac_register_events,
         },
         .host = lib->settings->get_str(lib->settings,
             "%s.plugins.kernel-vpp.host",
             VPP_AGENT_DEFAULT_HOST, lib->ns),
     );
 
+    grpc_c_init(GRPC_THREADS, NULL);
     this->grpc_client = grpc_c_client_init_by_host(this->host,
             name, NULL, NULL);
 

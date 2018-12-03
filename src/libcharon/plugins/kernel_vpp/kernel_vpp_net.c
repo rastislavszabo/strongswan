@@ -13,6 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <unistd.h>
+#include <utils/chunk.h>
 #include <utils/debug.h>
 #include <threading/thread.h>
 #include <threading/mutex.h>
@@ -20,6 +22,11 @@
 #include "vpp/model/rpc/rpc.grpc-c.h"
 #include "kernel_vpp_net.h"
 #include "kernel_vpp_grpc.h"
+
+#define NOTIF_TYPE_UPDOWN INTERFACES__INTERFACE_NOTIFICATION__NOTIF_TYPE__UPDOWN
+#define EV_STATUS_DEL INTERFACES__INTERFACES_STATE__INTERFACE__STATUS__DELETED
+#define EV_STATUS_UP INTERFACES__INTERFACES_STATE__INTERFACE__STATUS__UP
+#define EV_STATUS_DOWN INTERFACES__INTERFACES_STATE__INTERFACE__STATUS__DOWN
 
 typedef struct private_kernel_vpp_net_t private_kernel_vpp_net_t;
 
@@ -58,8 +65,6 @@ struct private_kernel_vpp_net_t {
  * Interface entry
  */
 typedef struct {
-    /** interface index */
-    uint32_t index;
     /** interface name */
     char if_name[64];
     /** list of known addresses, as host_t */
@@ -88,6 +93,7 @@ typedef struct {
  * FIB path entry
  */
 typedef struct {
+    char *if_name;
     chunk_t next_hop;
     uint32_t sw_if_index;
     uint8_t preference;
@@ -241,132 +247,107 @@ static bool addr_in_subnet(chunk_t addr, int prefix, chunk_t net, int net_len)
     return TRUE;
 }
 
+static status_t find_ip_route(fib_path_t *path, int prefix, host_t *dest)
+{
+    Rpc__DumpRequest rq = RPC__DUMP_REQUEST__INIT;
+    Rpc__RoutesResponse *rp = NULL;
+    L3__StaticRoutes__Route *route;
+    size_t i;
+    bool is_in_sub;
+    int address_len = 0;
+
+    status_t status = vac->dump_routes(vac, &rq, &rp);
+    if (SUCCESS != status)
+    {
+        DBG1(DBG_KNL, "failed to dump routes from VPP agent!");
+        return status;
+    }
+
+    for (i = 0; i < rp->n_staticroutes; i++)
+    {
+        route = rp->staticroutes[i];
+
+        host_t *net = host_create_from_subnet(route->dst_ip_addr,
+                &address_len);
+        if (!net)
+        {
+            DBG1(DBG_KNL, "failed to convert subnet: %s!", route->dst_ip_addr);
+            return status;
+        }
+        if (net->get_family(net) != dest->get_family(dest))
+        {
+            net->destroy(net);
+            continue;
+        }
+
+        is_in_sub = addr_in_subnet(dest->get_address(dest),
+                prefix, net->get_address(net), address_len);
+
+        if (!is_in_sub)
+            continue;
+
+        if (!route->has_type
+                || route->type == L3__STATIC_ROUTES__ROUTE__ROUTE_TYPE__DROP)
+            continue;
+
+        if ((route->has_preference && route->preference < path->preference)
+                || (path->if_name == NULL))
+        {
+            if (path->if_name)
+                free(path->if_name);
+            path->if_name = strdup(route->outgoing_interface);
+            path->preference = route->preference;
+            chunk_clear(&path->next_hop);
+            host_t *tmp = host_create_from_string(route->next_hop_addr, 0);
+            path->next_hop = chunk_clone(tmp->get_address(tmp));
+            tmp->destroy(tmp);
+        }
+        net->destroy(net);
+    }
+
+    if (rp)
+        rpc__routes_response__free_unpacked(rp, 0);
+
+    return SUCCESS;
+}
+
 /**
  * Get a route: If "nexthop" the nexthop is returned, source addr otherwise
  */
 static host_t *get_route(private_kernel_vpp_net_t *this, host_t *dest,
                          int prefix, bool nexthop, char **iface, host_t *src)
 {
-#if 0
     fib_path_t path;
-    char *out, *tmp;
-    int out_len, i, num;
-    vl_api_fib_path_t *fp;
     host_t *addr = NULL;
-    enumerator_t *enumerator;
-    iface_t *entry;
-    int family;
 
+    path.if_name = NULL;
     path.sw_if_index = ~0;
     path.preference = ~0;
     path.next_hop = chunk_empty;
 
     if (dest->get_family(dest) == AF_INET)
     {
-        vl_api_ip_fib_dump_t *mp;
-        vl_api_ip_fib_details_t *rmp;
-
-        family = AF_INET;
         if (prefix == -1)
             prefix = 32;
-
-        mp = vl_msg_api_alloc(sizeof(*mp));
-        mp->_vl_msg_id = ntohs(VL_API_IP_FIB_DUMP);
-        if (vac->send_dump(vac, (char *)mp, sizeof(*mp), &out, &out_len))
-            return NULL;
-        vl_msg_api_free(mp);
-        tmp = out;
-        while (tmp < (out + out_len))
-        {
-            rmp = (void *)tmp;
-            num = ntohl(rmp->count);
-            if (addr_in_subnet(dest->get_address(dest), prefix, chunk_create(rmp->address, 4), rmp->address_length))
-            {
-                fp = rmp->path;
-                for (i = 0; i < num; i++)
-                {
-                    if (fp->is_drop)
-                    {
-                        fp++;
-                        continue;
-                    }
-                    if ((fp->preference < path.preference) || (path.sw_if_index == ~0))
-                    {
-                        path.sw_if_index = ntohl(fp->sw_if_index);
-                        path.preference = fp->preference;
-                        chunk_clear(&path.next_hop);
-                        path.next_hop = chunk_create(fp->next_hop, 4);
-                    }
-                    fp++;
-                }
-            }
-            tmp += sizeof(*rmp) + (sizeof(*fp) * num);
-        }
     }
     else
     {
-        vl_api_ip6_fib_dump_t *mp;
-        vl_api_ip6_fib_details_t *rmp;
-
-        family = AF_INET6;
         if (prefix == -1)
             prefix = 128;
-
-        mp = vl_msg_api_alloc(sizeof(*mp));
-        mp->_vl_msg_id = ntohs(VL_API_IP6_FIB_DUMP);
-        if (vac->send_dump(vac, (char *)mp, sizeof(*mp), &out, &out_len))
-            return NULL;
-        vl_msg_api_free(mp);
-        tmp = out;
-        while (tmp < (out + out_len))
-        {
-            rmp = (void *)tmp;
-            num = ntohl(rmp->count);
-            if (addr_in_subnet(dest->get_address(dest), prefix, chunk_create(rmp->address, 16), rmp->address_length))
-            {
-                fp = rmp->path;
-                for (i = 0; i < num; i++)
-                {
-                    if (fp->is_drop)
-                    {
-                        fp++;
-                        continue;
-                    }
-                    if ((fp->preference < path.preference) || (path.sw_if_index == ~0))
-                    {
-                        path.sw_if_index = ntohl(fp->sw_if_index);
-                        path.preference = fp->preference;
-                        chunk_clear(&path.next_hop);
-                        path.next_hop = chunk_create(fp->next_hop, 16);
-                    }
-                    fp++;
-                }
-            }
-            tmp += sizeof(*rmp) + (sizeof(*fp) * num);
-        }
     }
+
+    if (SUCCESS != find_ip_route(&path, prefix, dest))
+        return NULL;
 
     if (path.next_hop.len)
     {
         if (nexthop)
         {
             if (iface)
-            {
-                *iface = NULL;
-                this->mutex->lock(this->mutex);
-                enumerator = this->ifaces->create_enumerator(this->ifaces);
-                while (enumerator->enumerate(enumerator, &entry))
-                {
-                    if (entry->index == path.sw_if_index)
-                    {
-                        *iface = strdup(entry->if_name);
-                        break;
-                    }
-                }
-                enumerator->destroy(enumerator);
-                this->mutex->unlock(this->mutex);
-            }
-            addr = host_create_from_chunk(family, path.next_hop, 0);
+                *iface = path.if_name;
+
+            addr = host_create_from_chunk(dest->get_family(dest),
+                    path.next_hop, 0);
         }
         else
         {
@@ -377,9 +358,7 @@ static host_t *get_route(private_kernel_vpp_net_t *this, host_t *dest,
         }
     }
 
-    free(out);
     return addr;
-#endif
 }
 
 METHOD(enumerator_t, addr_enumerate, bool, addr_enumerator_t *this, va_list args)
@@ -521,95 +500,142 @@ METHOD(kernel_net_t, destroy, void,
 /**
  * Update addresses for an iface entry
  */
-static void update_addrs(private_kernel_vpp_net_t *this, iface_t *entry)
+static void update_addrs(private_kernel_vpp_net_t *this, iface_t *entry,
+        Interfaces__Interfaces__Interface *iface)
 {
-#if 0
-    char *out;
-    int out_len, i, num;
-    vl_api_ip_address_dump_t *mp;
-    vl_api_ip_address_details_t *rmp;
+    size_t i;
+    char *addr;
+    int prefix;
     linked_list_t *addrs;
     host_t *host;
 
-    mp = vl_msg_api_alloc(sizeof(*mp));
-    mp->_vl_msg_id = ntohs(VL_API_IP_ADDRESS_DUMP);
-    mp->sw_if_index = ntohl(entry->index);
-    mp->is_ipv6 = 0;
-    if (vac->send_dump(vac, (char *)mp, sizeof(*mp), &out, &out_len))
-        return;
-    num = out_len / sizeof(*rmp);
     addrs = linked_list_create();
-    for (i = 0; i < num; i++)
+    for (i = 0; i < iface->n_ip_addresses; i++)
     {
-        rmp = (void *)out;
-        out += sizeof(*rmp);
-        host = host_create_from_chunk(AF_INET, chunk_create(rmp->ip, 4), 0);
+        addr = iface->ip_addresses[i];
+        if (!addr)
+            continue;
+
+        prefix = 0;
+        host = host_create_from_subnet(addr, &prefix);
         addrs->insert_last(addrs, host);
     }
-    vl_msg_api_free(mp);
-    free(out);
-    mp = vl_msg_api_alloc(sizeof(*mp));
-    mp->_vl_msg_id = ntohs(VL_API_IP_ADDRESS_DUMP);
-    mp->sw_if_index = ntohl(entry->index);
-    mp->is_ipv6 = 1;
-    if (vac->send_dump(vac, (char *)mp, sizeof(*mp), &out, &out_len))
-        return;
-    num = out_len / sizeof(*rmp);
-    for (i = 0; i < num; i++)
-    {
-        rmp = (void *)out;
-        out += sizeof(*rmp);
-        host = host_create_from_chunk(AF_INET6, chunk_create(rmp->ip, 16), 0);
-        addrs->insert_last(addrs, host);
-    }
-    vl_msg_api_free(mp);
-    free(out);
 
     entry->addrs->destroy(entry->addrs);
-    entry->addrs = linked_list_create_from_enumerator(addrs->create_enumerator(addrs));
+    entry->addrs = linked_list_create_from_enumerator(
+            addrs->create_enumerator(addrs));
     addrs->destroy(addrs);
-#endif
 }
 
-/**
- * VPP API interface event callback
- */
-static void event_cb(char *data, int data_len, void *ctx)
+static void update_interfaces(private_kernel_vpp_net_t *this,
+                              Rpc__InterfaceResponse *rp,
+                              enumerator_t *enumerator)
 {
-#if 0
-    private_kernel_vpp_net_t *this = ctx;
-    vl_api_sw_interface_event_t *event;
+    size_t i;
+    Interfaces__Interfaces__Interface *iface;
+    bool exists = FALSE;
+    iface_t *entry;
+
+    if (!rp)
+        return;
+
+    for (i = 0; i < rp->n_interfaces; i++)
+    {
+        iface = rp->interfaces[i];
+
+        exists = FALSE;
+        while (enumerator->enumerate(enumerator, &entry))
+        {
+            if (!strncmp(entry->if_name, iface->name, sizeof(entry->if_name)))
+            {
+                exists = TRUE;
+                break;
+            }
+        }
+
+        if (!exists)
+        {
+            INIT(entry,
+                    .up = iface->enabled ? TRUE : FALSE,
+                    .addrs = linked_list_create(),
+            );
+            strncpy(entry->if_name, iface->name, sizeof(entry->if_name));
+            DBG2(DBG_KNL, "IF %s %s", entry->if_name,
+                    entry->up ? "UP" : "DOWN");
+            this->ifaces->insert_last(this->ifaces, entry);
+        }
+        update_addrs(this, entry, iface);
+    }
+
+    rpc__interface_response__free_unpacked(rp, 0);
+}
+
+static void process_iface_event(private_kernel_vpp_net_t *this,
+        Rpc__NotificationsResponse *rp)
+{
+    Interfaces__InterfacesState__Interface *iface;
     iface_t *entry;
     enumerator_t *enumerator;
 
-    event = (void*)data;
-    DBG3(DBG_NET, "interface event %d", ntohl(event->sw_if_index));
+    if (!rp->nif || !rp->nif->state)
+        return;
+
+    iface = rp->nif->state;
+
     this->mutex->lock(this->mutex);
     enumerator = this->ifaces->create_enumerator(this->ifaces);
     while (enumerator->enumerate(enumerator, &entry))
     {
-        if (entry->index == ntohl(event->sw_if_index))
+        if (!strncmp(entry->if_name, iface->name, sizeof(entry->if_name)))
         {
-            if (event->deleted)
+            int is_up = iface->admin_status == EV_STATUS_UP ? TRUE : FALSE;
+
+            if (iface->admin_status == EV_STATUS_DEL)
             {
                 this->ifaces->remove_at(this->ifaces, enumerator);
-                DBG2(DBG_NET, "interface deleted %u %s",
-                     entry->index, entry->if_name);
+                DBG2(DBG_NET, "interface deleted %s", entry->if_name);
                 iface_destroy(entry);
             }
-            else if (entry->up != event->admin_up_down)
+            else if (entry->up != is_up)
             {
-                entry->up = event->admin_up_down ? TRUE : FALSE;
-                DBG2(DBG_NET, "interface state changed %u %s %s",
-                     entry->index, entry->if_name, entry->up ? "UP" : "DOWN");
+                entry->up = is_up;
+                DBG2(DBG_NET, "interface state changed %s %s",
+                     entry->if_name, entry->up ? "UP" : "DOWN");
             }
             break;
         }
     }
     enumerator->destroy(enumerator);
     this->mutex->unlock(this->mutex);
-    free(data);
-#endif
+}
+
+static void
+event_cb(grpc_c_context_t *context, void *tag, int success)
+{
+    Rpc__NotificationsResponse *rp = NULL;
+
+    do {
+        if (context->gcc_stream->read(context, (void **)&rp, 0, -1)) {
+            DBG1(DBG_KNL, "failed to read streaming data!");
+            continue;
+        }
+
+        if (rp) {
+            process_iface_event(tag, rp);
+            rpc__notifications_response__free_unpacked(rp, 0);
+        }
+
+    } while(rp);
+}
+
+static status_t register_for_iface_events(private_kernel_vpp_net_t *this)
+{
+    status_t status;
+    Rpc__NotificationRequest rq = RPC__NOTIFICATION_REQUEST__INIT;
+
+    status = vac->register_events(vac, &rq, event_cb, this);
+
+    return status;
 }
 
 /**
@@ -617,78 +643,35 @@ static void event_cb(char *data, int data_len, void *ctx)
  */
 static void *net_update_thread_fn(private_kernel_vpp_net_t *this)
 {
-#if 0
     status_t rv;
+    Rpc__DumpRequest rq = RPC__DUMP_REQUEST__INIT;
+    Rpc__InterfaceResponse *rp;
+    enumerator_t *enumerator;
+
     while (1)
     {
-        char *out;
-        int out_len;
-        vl_api_sw_interface_dump_t *mp;
-        vl_api_sw_interface_details_t *rmp;
-        int i, num;
-        enumerator_t *enumerator;
-        iface_t *entry;
-
-        mp = vl_msg_api_alloc (sizeof (*mp));
-        mp->_vl_msg_id = ntohs(VL_API_SW_INTERFACE_DUMP);
-        mp->name_filter_valid = 0;
-        rv = vac->send_dump(vac, (char *)mp, sizeof(*mp), &out, &out_len);
-        if (!rv)
+        rp = NULL;
+        status_t status = vac->dump_interfaces(vac, &rq, &rp);
+        if (status == SUCCESS)
         {
             this->mutex->lock(this->mutex);
             enumerator = this->ifaces->create_enumerator(this->ifaces);
-            num = out_len / sizeof(*rmp);
-            for (i = 0; i < num; i++)
-            {
-                 bool exists = FALSE;
-                 rmp = (void *)out;
-                 out += sizeof(*rmp);
-                 while (enumerator->enumerate(enumerator, &entry))
-                 {
-                     if (entry->index == ntohl(rmp->sw_if_index))
-                     {
-                         exists = TRUE;
-                         break;
-                     }
-                 }
-                 if (!exists)
-                 {
-                     INIT(entry,
-                             .index = ntohl(rmp->sw_if_index),
-                             .up = rmp->admin_up_down ? TRUE : FALSE,
-                             .addrs = linked_list_create(),
-                     );
-                     strncpy(entry->if_name, rmp->interface_name, 64);
-                     DBG2(DBG_KNL, "IF %d %s %s", entry->index, entry->if_name, entry->up ? "UP" : "DOWN");
-                     this->ifaces->insert_last(this->ifaces, entry);
-                 }
-                 update_addrs(this, entry);
-            }
+            update_interfaces(this, rp, enumerator);
             enumerator->destroy(enumerator);
             this->mutex->unlock(this->mutex);
-            free(out);
         }
-        vl_msg_api_free(mp);
 
         if (!this->events_on)
         {
-            vl_api_want_interface_events_t *emp;
-            api_main_t *am = &api_main;
+            rv = register_for_iface_events(this);
 
-            emp = vl_msg_api_alloc (sizeof (*emp));
-            emp->_vl_msg_id = ntohs(VL_API_WANT_INTERFACE_EVENTS);
-            emp->enable_disable = 1;
-            emp->pid = am->our_pid;
-            rv = vac->register_event(vac, (char *)emp, sizeof(*emp), event_cb,
-                                     VL_API_SW_INTERFACE_EVENT, this);
             if (!rv)
                 this->events_on = TRUE;
-
         }
 
         sleep(5);
     }
-#endif
+
     return NULL;
 }
 
