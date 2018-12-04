@@ -10,7 +10,7 @@ cd ${WS}/third_party/grpc-c
 git submodule update --init
 autoreconf --install
 ./builddeps.sh
-mkdir build && cd build
+mkdir build; cd build
 ../configure
 make
 

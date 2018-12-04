@@ -15,6 +15,7 @@ vpp_plugins=(
     nat
     stn
     rpc
+    punt
 )
 
 linux_plugins=(
