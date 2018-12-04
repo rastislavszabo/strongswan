@@ -42,6 +42,8 @@ struct vac_t {
 
     status_t (*register_events)(vac_t *this, Rpc__NotificationRequest *rq,
             grpc_c_client_callback_t *cb, void *tag);
+
+    status_t (*dump_punts)(vac_t *this, Rpc__PuntResponse **rp);
 };
 
 extern vac_t *vac;

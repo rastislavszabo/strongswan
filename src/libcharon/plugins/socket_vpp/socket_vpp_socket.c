@@ -263,17 +263,142 @@ METHOD(socket_t, destroy, void,
     free(this);
 }
 
+static status_t create_and_bind_socket(private_socket_vpp_socket_t *this,
+        const char *write_path, const char *read_path)
+{
+    status_t status = FAILED;
+    memset(&this->write_addr, 0, sizeof(this->write_addr));
+    strncpy(this->write_addr.sun_path, write_path,
+            sizeof(this->write_addr.sun_path));
+
+    if (this->write_addr.sun_path[sizeof(this->write_addr.sun_path) - 1] != '\0')
+    {
+        /* path was truncated */
+        DBG1(DBG_LIB, "write socket path is too long!");
+        goto out;
+    }
+
+    this->write_addr.sun_family = AF_UNIX;
+
+    memset(&this->read_addr, 0, sizeof(this->read_addr));
+    strncpy(this->read_addr.sun_path, read_path,
+            sizeof(this->read_addr.sun_path));
+
+    if (this->read_addr.sun_path[sizeof(this->read_addr.sun_path) - 1] != '\0')
+    {
+        /* path was truncated */
+        DBG1(DBG_LIB, "read socket path is too long!");
+        goto out;
+    }
+    this->read_addr.sun_family = AF_UNIX;
+
+    this->sock = socket(AF_UNIX, SOCK_DGRAM, 0);
+    if (this->sock < 0)
+    {
+        DBG1(DBG_LIB, "opening vpp socket failed: %m");
+        goto out;
+    }
+
+    unlink(this->read_addr.sun_path);
+    if (bind(this->sock, (struct sockaddr*)&this->read_addr,
+                sizeof(this->read_addr)) < 0)
+    {
+        DBG1(DBG_LIB, "binding vpp read socket failed: %m");
+        close(this->sock);
+        goto out;
+    }
+
+    status = SUCCESS;
+out:
+    return status;
+}
+
+static status_t get_vpp_socket_path(vac_t *vac, char **path)
+{
+    Rpc__PuntResponse *rp = NULL;
+    status_t status = FAILED;
+    Rpc__PuntResponse__PuntEntry *punt;
+
+    status = vac->dump_punts(vac, &rp);
+    if (status != SUCCESS)
+    {
+        DBG1(DBG_LIB, "failed to dump punts from VPP!");
+        goto out;
+    }
+
+    if (!rp)
+        goto out;
+
+    if (rp->n_punt_entries != 1)
+    {
+        DBG1(DBG_LIB, "expected a single punt entry, got: %d!",
+                rp->n_punt_entries);
+        goto out;
+    }
+
+    punt = rp->punt_entries[0];
+    if (!punt || !punt->has_pathname)
+        goto out;
+
+    /* convert to string */
+    *path = calloc(punt->pathname.len + 1, sizeof(char));
+    if (*path == NULL)
+    {
+        DBG1(DBG_LIB, "mem alloc");
+        goto out;
+    }
+    memcpy(*path, punt->pathname.data, punt->pathname.len);
+
+    status = SUCCESS;
+out:
+    if (rp)
+        rpc__punt_response__free_unpacked(rp, 0);
+
+    return status;
+}
+
+static status_t register_punt_socket(vac_t *vac,
+                                     uint16_t port,
+                                     char *read_path)
+{
+    Rpc__DataRequest rq = RPC__DATA_REQUEST__INIT;
+    Rpc__PutResponse *rp = NULL;
+    status_t status;
+    Punt__Punt punt = PUNT__PUNT__INIT;
+
+    rq.n_punts = 1;
+    rq.punts = calloc(1, sizeof(Punt__Punt *));
+    rq.punts[0] = &punt;
+
+    punt.has_l3_protocol = 1;
+    punt.l3_protocol = PUNT__L3_PROTOCOL__ALL;
+    punt.has_l4_protocol = 1;
+    punt.l4_protocol = PUNT__L4_PROTOCOL__UDP;
+    punt.has_port = 1;
+    punt.port = port;
+    punt.socket_path = read_path;
+
+    /* Register punt socket for IKEv2 port in VPP */
+    status = vac->put(vac, &rq, &rp);
+    if (status != SUCCESS)
+    {
+        DBG1(DBG_LIB, "register vpp ip punt socket faield!");
+    }
+    if (rp)
+        rpc__put_response__free_unpacked(rp, 0);
+
+    free(rq.punts);
+    return status;
+}
+
 /*
  * See header for description
  */
 socket_vpp_socket_t *socket_vpp_socket_create()
 {
-#if 0
     private_socket_vpp_socket_t *this;
-    char *read_path, *out;
-    int out_len;
-    vl_api_punt_socket_register_t *mp;
-    vl_api_punt_socket_register_reply_t *rmp;
+    char *read_path;
+    char *write_path = NULL;
 
     INIT(this,
         .public = {
@@ -298,63 +423,24 @@ socket_vpp_socket_t *socket_vpp_socket_create()
     if (!this->vac)
     {
         DBG1(DBG_LIB, "no vac available (plugin missing?)");
-    }
-    /* Register IPv4 punt socket for IKEv2 port in VPP */
-    mp = vl_msg_api_alloc(sizeof(*mp));
-    memset(mp, 0, sizeof(*mp));
-    mp->_vl_msg_id = ntohs(VL_API_PUNT_SOCKET_REGISTER);
-    mp->header_version = ntohl(1);
-    mp->is_ip4 = 1;
-    mp->l4_protocol = IPPROTO_UDP;
-    mp->l4_port = ntohs(this->port);
-    strncpy(mp->pathname, read_path, 107);
-    if (this->vac->send(this->vac, (char*)mp, sizeof(*mp), &out, &out_len))
-    {
-        DBG1(DBG_LIB, "send register vpp ip4 punt socket faield");
-        return NULL;
-    }
-    rmp = (void *)out;
-    if (rmp->retval)
-    {
-        DBG1(DBG_LIB, "register vpp ip4 punt socket faield %d", ntohl(rmp->retval));
-        return NULL;
-    }
-    /* Register IPv6 punt socket for IKEv2 port in VPP */
-    mp->is_ip4 = 0;
-    if (this->vac->send(this->vac, (char*)mp, sizeof(*mp), &out, &out_len))
-    {
-        DBG1(DBG_LIB, "send register vpp ip6 punt socket faield");
-        return NULL;
-    }
-    rmp = (void *)out;
-    if (rmp->retval)
-    {
-        DBG1(DBG_LIB, "register vpp ip6 punt socket faield %d", ntohl(rmp->retval));
-        return NULL;
-    }
-    DBG3(DBG_LIB, "vpp punt socket %s", rmp->pathname);
-
-    this->sock = socket(AF_UNIX, SOCK_DGRAM, 0);
-    if (this->sock < 0)
-    {
-        DBG1(DBG_LIB, "opening vpp socket failed: %m");
         return NULL;
     }
 
-    memset(&this->write_addr, 0, sizeof(this->write_addr));
-    strncpy(this->write_addr.sun_path, rmp->pathname, sizeof(this->write_addr.sun_path));
-    this->write_addr.sun_family = AF_UNIX;
+    status_t status = register_punt_socket(this->vac, this->port, read_path);
+    if (SUCCESS != status)
+        return NULL;
 
-    memset(&this->read_addr, 0, sizeof(this->read_addr));
-    strncpy(this->read_addr.sun_path, read_path, sizeof(this->read_addr.sun_path));
-    this->read_addr.sun_family = AF_UNIX;
-    unlink(this->read_addr.sun_path);
-    if (bind(this->sock, (struct sockaddr*)&this->read_addr, sizeof(this->read_addr)) < 0)
+    status = get_vpp_socket_path(this->vac, &write_path);
+    if (SUCCESS != status)
+        return NULL;
+
+    status = create_and_bind_socket(this, write_path, read_path);
+    if (SUCCESS != status)
     {
-        DBG1(DBG_LIB, "binding vpp read socket failed: %m");
-        close(this->sock);
+        free(write_path);
         return NULL;
     }
+
+    free(write_path);
     return &this->public;
-#endif
 }

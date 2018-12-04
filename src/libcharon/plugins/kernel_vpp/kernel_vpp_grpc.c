@@ -150,6 +150,22 @@ METHOD(vac_t, destroy, void, private_vac_t *this)
     grpc_c_client_free(this->grpc_client);
 }
 
+METHOD(vac_t, vac_dump_punts, status_t, private_vac_t *this,
+        Rpc__PuntResponse **rp)
+{
+    Rpc__DumpRequest rq = RPC__DUMP_REQUEST__INIT;
+
+    int rpc_status = rpc__data_dump_service__dump_punt(
+            this->grpc_client,
+            NULL, /* metadata array */
+            0, /* flags */
+            &rq,
+            rp,
+            NULL /* status */,
+            -1 /* timeout */);
+    return rpc_status ? FAILED : SUCCESS;
+}
+
 vac_t *vac_create(char *name)
 {
     private_vac_t *this;
@@ -159,6 +175,7 @@ vac_t *vac_create(char *name)
             .put = _vac_put,
             .del = _vac_del,
             .destroy = _destroy,
+            .dump_punts = _vac_dump_punts,
             .dump_interfaces = _vac_dump_interfaces,
             .dump_routes = _vac_dump_routes,
             .dump_fibs = _vac_dump_fibs,
