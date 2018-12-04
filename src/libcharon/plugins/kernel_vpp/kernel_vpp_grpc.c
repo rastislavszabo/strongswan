@@ -33,6 +33,9 @@ typedef struct private_vac_t private_vac_t;
  */
 vac_t *vac;
 
+/* common dump request message */
+static Rpc__DumpRequest rq = RPC__DUMP_REQUEST__INIT;
+
 /**
  * Private variables and functions of vac_t class.
  */
@@ -77,12 +80,12 @@ METHOD(vac_t, vac_del, status_t, private_vac_t *this,
 }
 
 METHOD(vac_t, vac_dump_interfaces, status_t, private_vac_t *this,
-        Rpc__DumpRequest *rq, Rpc__InterfaceResponse **rp)
+        Rpc__InterfaceResponse **rp)
 {
     int rpc_status = rpc__data_dump_service__dump_interfaces(this->grpc_client,
             NULL, /* metadata array */
             0, /* flags */
-            rq,
+            &rq,
             rp,
             NULL /* status */,
             -1 /* timeout */);
@@ -90,27 +93,13 @@ METHOD(vac_t, vac_dump_interfaces, status_t, private_vac_t *this,
 }
 
 METHOD(vac_t, vac_dump_routes, status_t, private_vac_t *this,
-        Rpc__DumpRequest *rq, Rpc__RoutesResponse **rp)
+        Rpc__RoutesResponse **rp)
 {
     int rpc_status = rpc__data_dump_service__dump_routes(
             this->grpc_client,
             NULL, /* metadata array */
             0, /* flags */
-            rq,
-            rp,
-            NULL /* status */,
-            -1 /* timeout */);
-    return rpc_status ? FAILED : SUCCESS;
-}
-
-METHOD(vac_t, vac_dump_fibs, status_t, private_vac_t *this,
-        Rpc__DumpRequest *rq, Rpc__FibResponse **rp)
-{
-    int rpc_status = rpc__data_dump_service__dump_fibs(
-            this->grpc_client,
-            NULL, /* metadata array */
-            0, /* flags */
-            rq,
+            &rq,
             rp,
             NULL /* status */,
             -1 /* timeout */);
@@ -118,13 +107,13 @@ METHOD(vac_t, vac_dump_fibs, status_t, private_vac_t *this,
 }
 
 METHOD(vac_t, vac_dump_ipsec_tunnels, status_t, private_vac_t *this,
-        Rpc__DumpRequest *rq, Rpc__IPSecTunnelResponse **rp)
+        Rpc__IPSecTunnelResponse **rp)
 {
     int rpc_status = rpc__data_dump_service__dump_ipsec_tunnels(
             this->grpc_client,
             NULL, /* metadata array */
             0, /* flags */
-            rq,
+            &rq,
             rp,
             NULL /* status */,
             -1 /* timeout */);
@@ -153,7 +142,6 @@ METHOD(vac_t, destroy, void, private_vac_t *this)
 METHOD(vac_t, vac_dump_punts, status_t, private_vac_t *this,
         Rpc__PuntResponse **rp)
 {
-    Rpc__DumpRequest rq = RPC__DUMP_REQUEST__INIT;
 
     int rpc_status = rpc__data_dump_service__dump_punt(
             this->grpc_client,
@@ -178,7 +166,6 @@ vac_t *vac_create(char *name)
             .dump_punts = _vac_dump_punts,
             .dump_interfaces = _vac_dump_interfaces,
             .dump_routes = _vac_dump_routes,
-            .dump_fibs = _vac_dump_fibs,
             .dump_ipsec_tunnels = _vac_dump_ipsec_tunnels,
             .register_events = _vac_register_events,
         },

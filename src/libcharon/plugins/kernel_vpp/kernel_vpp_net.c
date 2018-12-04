@@ -249,14 +249,13 @@ static bool addr_in_subnet(chunk_t addr, int prefix, chunk_t net, int net_len)
 
 static status_t find_ip_route(fib_path_t *path, int prefix, host_t *dest)
 {
-    Rpc__DumpRequest rq = RPC__DUMP_REQUEST__INIT;
     Rpc__RoutesResponse *rp = NULL;
     L3__StaticRoutes__Route *route;
     size_t i;
     bool is_in_sub;
     int address_len = 0;
 
-    status_t status = vac->dump_routes(vac, &rq, &rp);
+    status_t status = vac->dump_routes(vac, &rp);
     if (SUCCESS != status)
     {
         DBG1(DBG_KNL, "failed to dump routes from VPP agent!");
@@ -644,14 +643,13 @@ static status_t register_for_iface_events(private_kernel_vpp_net_t *this)
 static void *net_update_thread_fn(private_kernel_vpp_net_t *this)
 {
     status_t rv;
-    Rpc__DumpRequest rq = RPC__DUMP_REQUEST__INIT;
     Rpc__InterfaceResponse *rp;
     enumerator_t *enumerator;
 
     while (1)
     {
         rp = NULL;
-        status_t status = vac->dump_interfaces(vac, &rq, &rp);
+        status_t status = vac->dump_interfaces(vac, &rp);
         if (status == SUCCESS)
         {
             this->mutex->lock(this->mutex);

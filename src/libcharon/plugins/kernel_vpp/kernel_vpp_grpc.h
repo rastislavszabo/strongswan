@@ -28,22 +28,13 @@ struct vac_t {
     status_t (*put)(vac_t *this, Rpc__DataRequest *rq, Rpc__PutResponse **rp);
     status_t (*del)(vac_t *this, Rpc__DataRequest *rq, Rpc__DelResponse **rp);
 
-    status_t (*dump_interfaces)(vac_t *this, Rpc__DumpRequest *rq,
-            Rpc__InterfaceResponse **rp);
-
-    status_t (*dump_routes)(vac_t *this, Rpc__DumpRequest *rq,
-            Rpc__RoutesResponse **rp);
-
-    status_t (*dump_fibs)(vac_t *this, Rpc__DumpRequest *rq,
-            Rpc__FibResponse **rp);
-
-    status_t (*dump_ipsec_tunnels)(vac_t *this, Rpc__DumpRequest *rq,
-            Rpc__IPSecTunnelResponse **rp);
+    status_t (*dump_interfaces)(vac_t *this, Rpc__InterfaceResponse **rp);
+    status_t (*dump_routes)(vac_t *this, Rpc__RoutesResponse **rp);
+    status_t (*dump_ipsec_tunnels)(vac_t *this, Rpc__IPSecTunnelResponse **rp);
+    status_t (*dump_punts)(vac_t *this, Rpc__PuntResponse **rp);
 
     status_t (*register_events)(vac_t *this, Rpc__NotificationRequest *rq,
             grpc_c_client_callback_t *cb, void *tag);
-
-    status_t (*dump_punts)(vac_t *this, Rpc__PuntResponse **rp);
 };
 
 extern vac_t *vac;
