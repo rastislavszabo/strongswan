@@ -13,6 +13,7 @@ compiler:
 cache: ccache
 
 before_install:
+  - ./build_dependencies.sh
   - travis_retry ./scripts/test.sh deps
   - travis_retry ./scripts/test.sh pydeps
 
