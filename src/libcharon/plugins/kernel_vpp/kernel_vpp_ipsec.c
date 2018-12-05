@@ -50,9 +50,9 @@ struct private_kernel_vpp_ipsec_t {
     mutex_t *mutex;
 
     /**
-     * Hash table containing cache of Security Association Entries
+     * Hash table containing cache of partially filed tunnels
      */
-    hashtable_t *sad;
+    hashtable_t *cache;
 
     /**
      * Linked list of created ipsec tunnels
@@ -75,48 +75,8 @@ struct private_kernel_vpp_ipsec_t {
     bool manage_routes;
 };
 
-// TODO: -cosider not using sa_t, we can just create
-//       tunnel data type and fill those values in
-//       - then finish it on next SA call
-//       only chalenge it has to have two hash lookups
-//       one based on SPI+ADDR other based on REQID
-//       - this could also simplify our delete problem
-//       - tunnel could be deleted by either del_policy
-//       or del_sa
-
 /**
- * Security association entry
- */
-typedef struct {
-
-    /**
-     * SPI
-     */
-    uint32_t spi;
-
-    /**
-     * VPP Encryption algorithm
-     */
-    uint16_t vpp_enc_alg;
-
-    /**
-     * Encryption key
-     */
-    char *enc_key;
-
-    /**
-     * VPP Integrity Protection algorithm
-     */
-    uint16_t vpp_int_alg;
-
-    /**
-     * Integrity protection key
-     */
-    char *int_key;
-
-} sa_t;
-
-/**
+ * VPP Tunnel Interface
  */
 typedef struct {
 
@@ -183,15 +143,6 @@ typedef struct {
 
 } tunnel_t;
 
-/**
- * Hash function for IPsec Tunnel Interface
- */
-static u_int tunnel_hash(kernel_ipsec_sa_id_t *sa)
-{
-    return chunk_hash_inc(chunk_from_thing(sa->spi),
-                          chunk_hash(sa->dst->get_address(sa->dst)));
-}
-
 static void free_tunnel(tunnel_t *tunnel)
 {
     if (tunnel->if_name)
@@ -211,6 +162,37 @@ static void free_tunnel(tunnel_t *tunnel)
     if (tunnel->dst_int_key)
         free(tunnel->dst_int_key);
     free(tunnel);
+}
+
+/**
+ * Used to test input from strongswan
+ */
+static void dump_tunnel(tunnel_t *tp)
+{
+    const char *q = "?";
+    DBG1(DBG_KNL, "if_name: %s, un_if_name: %s, src_spi: %d, dst_spi: %d" \
+                  "src_addr: %s, dst_addr: %s, enc_alg: %d, int_alg: %d" \
+                  "src_enc_key: %s, dst_enc_key: %s," \
+                  "src_int_key: %s, dst_int_key: %s",
+                  tp->if_name ? tp->if_name : q, 
+                  tp->un_if_name ? tp->un_if_name : q,
+                  tp->src_spi, tp->dst_spi,
+                  tp->src_addr ? tp->src_addr : q,
+                  tp->dst_addr ? tp->dst_addr : q,
+                  tp->enc_alg, tp->int_alg,
+                  tp->src_enc_key ? tp->src_enc_key : q,
+                  tp->dst_enc_key ? tp->dst_enc_key : q,
+                  tp->src_int_key ? tp->src_int_key : q,
+                  tp->dst_int_key ? tp->dst_int_key : q);
+}
+
+/**
+ * Hash function for IPsec Tunnel Interface
+ */
+static u_int tunnel_hash(kernel_ipsec_sa_id_t *sa)
+{
+    return chunk_hash_inc(chunk_from_thing(sa->spi),
+                          chunk_hash(sa->dst->get_address(sa->dst)));
 }
 
 /* ENCR_3DES (4) NOT supported in proto definition */
@@ -273,7 +255,36 @@ static status_t convert_int_alg(uint16_t alg, uint16_t *vpp_alg)
 }
 
 /**
- * Add or remove a routes
+ * Delete tunnel interface
+ */
+static status_t delete_tunnel(tunnel_t *tp)
+{
+    Ipsec__TunnelInterfaces__Tunnel tunnel = IPSEC__TUNNEL_INTERFACES__TUNNEL__INIT;
+    Ipsec__TunnelInterfaces__Tunnel *tunnels[1];
+
+    Rpc__DataRequest req = RPC__DATA_REQUEST__INIT;
+    Rpc__DelResponse *rsp = NULL;
+
+    req.tunnels = tunnels;
+    req.tunnels[0] = &tunnel;
+    req.n_tunnels = 1;
+
+    status_t rc;
+
+    tunnel.name = tp->if_name;
+
+    rc = vac->del(vac, &req, &rsp); 
+    if (rc == FAILED)
+    {
+        DBG1(DBG_KNL, "error running del rpc request");
+        return FAILED;
+    }
+
+    return SUCCESS;
+}
+
+/**
+ * Add or remove a route
  */
 static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
                                   kernel_ipsec_policy_id_t *id,
@@ -298,20 +309,30 @@ static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
         return SUCCESS;
     }
 
-    kernel_ipsec_sa_id_t _id = {
+    kernel_ipsec_sa_id_t sa_id = {
             .dst = data->dst,
             .spi = data->sa->esp.spi
     };
 
-    this->mutex->lock(this->mutex);
-    tunnel = this->tunnels->get(this->tunnels, &_id);
-    this->mutex->unlock(this->mutex);
+    if (op == ROUTE_ADD)
+    {
+        this->mutex->lock(this->mutex);
+        tunnel = this->tunnels->get(this->tunnels, &sa_id);
+        this->mutex->unlock(this->mutex);
+    }
+    else {
+        this->mutex->lock(this->mutex);
+        tunnel = this->tunnels->remove(this->tunnels, &sa_id);
+        this->mutex->unlock(this->mutex);
+    }
 
     if (!tunnel)
     {
         DBG1(DBG_KNL, "tunnel not found can't add routes");
         return FAILED;
     }
+
+    dump_tunnel(tunnel);
 
     id->dst_ts->to_subnet(id->dst_ts, &dst_net, &pfx_len);
 
@@ -326,6 +347,9 @@ static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
         rc = charon->kernel->del_route(charon->kernel, dst_net->get_address(
                                        dst_net), pfx_len, data->dst, NULL,
                                        tunnel->if_name);
+        // TODO: test output
+        delete_tunnel(tunnel);
+        free_tunnel(tunnel);
     }
 
     DBG2(DBG_KNL, "(%s) %s route %H/%d via tunnel interface %s",
@@ -453,35 +477,6 @@ static status_t create_tunnel(tunnel_t *tp)
     return get_tunnel_name(tp);
 }
 
-/**
- * Delete tunnel interface
- */
-static status_t delete_tunnel(tunnel_t *tp)
-{
-    Ipsec__TunnelInterfaces__Tunnel tunnel = IPSEC__TUNNEL_INTERFACES__TUNNEL__INIT;
-    Ipsec__TunnelInterfaces__Tunnel *tunnels[1];
-
-    Rpc__DataRequest req = RPC__DATA_REQUEST__INIT;
-    Rpc__DelResponse *rsp = NULL;
-
-    req.tunnels = tunnels;
-    req.tunnels[0] = &tunnel;
-    req.n_tunnels = 1;
-
-    status_t rc;
-
-    tunnel.name = tp->if_name;
-
-    rc = vac->del(vac, &req, &rsp); 
-    if (rc == FAILED)
-    {
-        DBG1(DBG_KNL, "error running del rpc request");
-        return FAILED;
-    }
-
-    return SUCCESS;
-}
-
 METHOD(kernel_ipsec_t, add_sa, status_t,
     private_kernel_vpp_ipsec_t *this, kernel_ipsec_sa_id_t *id,
     kernel_ipsec_add_sa_t *data)
@@ -495,62 +490,34 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
     tunnel_t *tunnel;
     status_t rc;
     char *name;
-    sa_t *sa;
 
     if (data->mode != MODE_TUNNEL)
     {
         return NOT_SUPPORTED;
     }
 
-    rc = convert_enc_alg(data->enc_alg, data->enc_key, &vpp_enc_alg);
-    if (rc != SUCCESS)
-    {
-        DBG1(DBG_KNL, "algorithm %N not supported by VPP!",
-             encryption_algorithm_names, data->enc_alg);
-        return NOT_SUPPORTED;
-    }
-
-    rc = convert_int_alg(data->int_alg, &vpp_int_alg);
-    if (rc != SUCCESS)
-    {
-        DBG1(DBG_KNL, "algorithm %N not supported by VPP!",
-             integrity_algorithm_names, data->int_alg);
-        return NOT_SUPPORTED;
-    }
-
     // inbound SA comes first
     if (data->inbound)
     {
-        enc_key = chunk_to_hex(data->enc_key, NULL, 0);
-        int_key = chunk_to_hex(data->int_key, NULL, 0);
-
-        INIT(sa,
-              .spi = id->spi,
-              .vpp_enc_alg = vpp_enc_alg,
-              .vpp_int_alg = vpp_int_alg,
-              .enc_key = enc_key.ptr,
-              .int_key = enc_key.ptr);
-
-        // reqid is unique for each entry (2xSA + SP)
-        this->mutex->lock(this->mutex);
-        this->sad->put(this->sad, (void *)(uintptr_t)data->reqid, sa);
-        this->mutex->unlock(this->mutex);
-    }
-    else
-    {
-        this->mutex->lock(this->mutex);
-        sa = this->sad->remove(this->sad, (void *)(uintptr_t)data->reqid);
-        this->mutex->unlock(this->mutex);
-
-        if (!sa)
+        rc = convert_enc_alg(data->enc_alg, data->enc_key, &vpp_enc_alg);
+        if (rc != SUCCESS)
         {
-            DBG1(DBG_KNL, "adding outbound SA failed, missing inbound SA");
-            return NOT_FOUND;
+            DBG1(DBG_KNL, "algorithm %N not supported by VPP!",
+                 encryption_algorithm_names, data->enc_alg);
+            return NOT_SUPPORTED;
         }
 
+        rc = convert_int_alg(data->int_alg, &vpp_int_alg);
+        if (rc != SUCCESS)
+        {
+            DBG1(DBG_KNL, "algorithm %N not supported by VPP!",
+                 integrity_algorithm_names, data->int_alg);
+            return NOT_SUPPORTED;
+        }
+
+        // TODO: this could be reversed be sure to test
         if (!charon->kernel->get_interface(charon->kernel, id->src, &name))
         {
-            free(sa);
             DBG1(DBG_KNL, "unable to get interface");
             return FAILED;
         }
@@ -561,19 +528,48 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
         INIT(tunnel,
                .if_name = NULL,
                .un_if_name = name,
-               .src_spi = sa->spi,
-               .dst_spi = id->spi,
+               .src_spi = id->spi,
+
+               // TODO: this could be reversed be sure to test
                .src_addr = chunk_to_ipv4(id->src->get_address(id->src)),
-               .dst_addr = chunk_to_ipv4(id->src->get_address(id->dst)),
+               .dst_addr = chunk_to_ipv4(id->src->get_address(id->dst)),       
+
                .enc_alg = vpp_enc_alg,
                .int_alg = vpp_int_alg,
-               .src_enc_key = sa->enc_key,
-               .src_int_key = sa->int_key,
-               .dst_enc_key = enc_key.ptr,
-               .dst_int_key = int_key.ptr
+               .src_enc_key = enc_key.ptr,
+               .src_int_key = int_key.ptr
             );
 
-        free(sa);
+        // reqid is unique for each entry (2xSA + SP)
+        this->mutex->lock(this->mutex);
+        this->cache->put(this->cache, (void *)(uintptr_t)data->reqid, tunnel);
+        this->mutex->unlock(this->mutex);
+
+        DBG1(DBG_KNL, "inboud SA received");
+        dump_tunnel(tunnel);
+    }
+    else
+    {
+        this->mutex->lock(this->mutex);
+        tunnel = this->cache->remove(this->cache, (void *)(uintptr_t)data->reqid);
+        this->mutex->unlock(this->mutex);
+
+        if (!tunnel)
+        {
+            DBG1(DBG_KNL, "error adding tunnel, missing inbound SA");
+            return NOT_FOUND;
+        }
+
+        DBG1(DBG_KNL, "outbound SA received");
+        dump_tunnel(tunnel);
+
+        enc_key = chunk_to_hex(data->enc_key, NULL, 0);
+        int_key = chunk_to_hex(data->int_key, NULL, 0);
+
+        tunnel->dst_enc_key = enc_key.ptr;
+        tunnel->src_enc_key = int_key.ptr;
+
+        tunnel->dst_spi = id->spi;
 
         if (create_tunnel(tunnel) == FAILED)
         {
@@ -599,39 +595,6 @@ METHOD(kernel_ipsec_t, del_sa, status_t,
     private_kernel_vpp_ipsec_t *this, kernel_ipsec_sa_id_t *id,
     kernel_ipsec_del_sa_t *data)
 {
-    tunnel_t *tunnel;
-    status_t rc;
-
-    // TODO:
-    // resolve this issue
-    // we don't know destination of this sa
-    // this is best effort delete
-
-    kernel_ipsec_sa_id_t sa_id = {
-            .dst = id->dst,
-            .spi = id->spi
-    };
-
-    this->mutex->lock(this->mutex);
-    tunnel = this->tunnels->remove(this->tunnels, &sa_id);
-    this->mutex->unlock(this->mutex);
-
-    if (!tunnel)
-    {
-        DBG1(DBG_KNL, "tunnel interface can't be found");
-        //return NOT_FOUND;
-        return SUCCESS;
-    }
-
-    rc = delete_tunnel(tunnel);
-    free_tunnel(tunnel);
-
-    if (rc != SUCCESS)
-    {
-        DBG1(DBG_KNL, "error deleting tunnel interface");
-        return FAILED;
-    }
-
     return SUCCESS;
 }
 
@@ -719,18 +682,17 @@ METHOD(kernel_ipsec_t, get_spi, status_t,
     return SUCCESS;
 }
 
-static void free_sas(private_kernel_vpp_ipsec_t *this)
+static void free_cache(private_kernel_vpp_ipsec_t *this)
 {
     void *key;
-    sa_t *val;
+    tunnel_t *val;
     enumerator_t *enumerator;
 
     this->mutex->lock(this->mutex);
-    enumerator = this->sad->create_enumerator(this->tunnels);
+    enumerator = this->cache->create_enumerator(this->cache);
     while (enumerator->enumerate(enumerator, &key, &val))
     {
-        free(val->enc_key);
-        free(val->int_key);
+        free_tunnel(val);
     }
     enumerator->destroy(enumerator);
     this->mutex->unlock(this->mutex);
@@ -755,12 +717,12 @@ static void free_tunnels(private_kernel_vpp_ipsec_t *this)
 METHOD(kernel_ipsec_t, destroy, void,
     private_kernel_vpp_ipsec_t *this)
 {
-    free_sas(this);
+    free_cache(this);
     free_tunnels(this);
 
     this->mutex->destroy(this->mutex);
+    this->cache->destroy(this->cache);
     this->tunnels->destroy(this->tunnels);
-    this->sad->destroy(this->sad);
     free(this);
 }
 
@@ -834,7 +796,7 @@ kernel_vpp_ipsec_t *kernel_vpp_ipsec_create()
             },
         },
         .mutex = mutex_create(MUTEX_TYPE_DEFAULT),
-        .sad = hashtable_create(hashtable_hash_ptr, hashtable_equals_ptr, 4),
+        .cache = hashtable_create(hashtable_hash_ptr, hashtable_equals_ptr, 4),
         // TODO: check if it can be used like this
         .tunnels = hashtable_create((hashtable_hash_t)tunnel_hash,
                                     hashtable_equals_ptr, 32),
