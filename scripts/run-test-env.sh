@@ -102,7 +102,7 @@ docker run --name responder -d --rm --net=host --privileged -it -v $AGENT_CFG_DI
 docker run --name initiator -d --rm --privileged -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan
 
 # dummy network behind vpn
-sleep 1
+sleep 2
 docker exec responder vppctl -s localhost:5002 tap connect tap0
 docker exec responder vppctl -s localhost:5002 set int state tapcli-0 up
 docker exec responder vppctl -s localhost:5002 set int ip address tapcli-0 10.10.10.1/24
