@@ -13,6 +13,7 @@ autoreconf --install
 mkdir build; cd build
 ../configure
 make
+sudo make install
 
 echo "Generating app-agent API files"
 cd ${WS}/third_party/vpp-agent
