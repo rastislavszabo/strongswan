@@ -41,3 +41,4 @@ cd ${WS}/third_party/vpp_agent_c_api
 ./autogen.sh
 ./configure
 make
+sudo make install
