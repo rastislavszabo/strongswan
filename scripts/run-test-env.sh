@@ -19,9 +19,9 @@ INITIATOR_CFG_DIR="/tmp/initiator"
 
 grpc_conf() {
   sudo mkdir -p $AGENT_CFG_DIR
-  sudo bash -c 'cat << EOF > $AGENT_CFG_DIR/grpc.conf
+  sudo bash -c "cat << EOF > $AGENT_CFG_DIR/grpc.conf
 # GRPC endpoint defines IP address and port (if tcp type) or unix domain socket file (if unix type).
-endpoint: 0.0.0.0:9111
+endpoint: 127.0.0.1:9111
 
 # If unix domain socket file is used for GRPC communication, permissions to the file can be set here.
 # Permission value uses standard three-or-four number linux binary reference.
@@ -39,11 +39,11 @@ max-msg-size: 4096
 
 # Limit of server streams to each server transport.
 max-concurrent-streams: 0
-EOF'
+EOF"
 }
 
 responder_conf() {
-  sudo bash -c 'cat << EOF > /etc/ipsec.conf
+  sudo bash -c "cat << EOF > /etc/ipsec.conf
 conn responder
 # defaults?
   auto=add
@@ -65,15 +65,15 @@ conn responder
 # remote: (roadwarrior)
   rightauth=psk
 
-EOF'
-  sudo bash -c 'cat << EOF > /etc/ipsec.secrets
-: PSK "Vpp123"
-EOF'
+EOF"
+  sudo bash -c "cat << EOF > /etc/ipsec.secrets
+: PSK 'Vpp123'
+EOF"
 }
 
 initiator_conf() {
   sudo mkdir -p $INITIATOR_CFG_DIR
-  sudo bash -c 'cat << EOF > $INITIATOR_CFG_DIR/ipsec.conf
+  sudo bash -c "cat << EOF > $INITIATOR_CFG_DIR/ipsec.conf
 conn initiator
 # defaults?
   auto=add
@@ -95,23 +95,18 @@ conn initiator
 
   rightsubnet=10.10.10.0/24
 
-EOF'
-  sudo bash -c 'cat << EOF > $INITIATOR_CFG_DIR/ipsec.secrets
-: PSK "Vpp123"
-EOF'
+EOF"
+  sudo bash -c "cat << EOF > $INITIATOR_CFG_DIR/ipsec.secrets
+: PSK 'Vpp123'
+EOF"
 }
 
 responder_conf
 initiator_conf
 grpc_conf
 
-# vpp-agent prerequisites (kafka + etcd)
-sudo docker run --name kafka -p 9092:9092 -d --rm spotify/kafka
-sudo docker run --name etcd -p 2379:2379 -d --rm quay.io/coreos/etcd:v3.1.0 /usr/local/bin/etcd
-sleep 1
-
 # responder aka vpn server (gateway)
-sudo docker run --name responder -d --rm --net=host --privileged -it -v $AGENT_CFG_DIR:/opt/vpp-agent/dev ligato/vpp-agent
+sudo docker run --name responder -d --rm --net=host --privileged -it -e ETCD_CONFIG=DISABLED -e KAFKA_CONFIG=DISABLED -v $AGENT_CFG_DIR:/opt/vpp-agent/dev ligato/vpp-agent
 
 # initiator aka vpn client
 sudo docker run --name initiator -d --rm --privileged -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan
