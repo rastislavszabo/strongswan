@@ -18,7 +18,8 @@ AGENT_CFG_DIR="/tmp/vpp-agent"
 INITIATOR_CFG_DIR="/tmp/initiator"
 
 grpc_conf() {
-  cat << EOF > $AGENT_CFG_DIR/grpc.conf
+  sudo mkdir -p $AGENT_CFG_DIR
+  sudo bash -c 'cat << EOF > $AGENT_CFG_DIR/grpc.conf
 # GRPC endpoint defines IP address and port (if tcp type) or unix domain socket file (if unix type).
 endpoint: 0.0.0.0:9111
 
@@ -38,7 +39,7 @@ max-msg-size: 4096
 
 # Limit of server streams to each server transport.
 max-concurrent-streams: 0
-EOF
+EOF'
 }
 
 responder_conf() {
@@ -71,8 +72,8 @@ EOF'
 }
 
 initiator_conf() {
-  mkdir -p $INITIATOR_CFG_DIR
-  cat << EOF > $INITIATOR_CFG_DIR/ipsec.conf
+  sudo mkdir -p $INITIATOR_CFG_DIR
+  sudo bash -c 'cat << EOF > $INITIATOR_CFG_DIR/ipsec.conf
 conn initiator
 # defaults?
   auto=add
@@ -94,10 +95,10 @@ conn initiator
 
   rightsubnet=10.10.10.0/24
 
-EOF
-  cat << EOF > $INITIATOR_CFG_DIR/ipsec.secrets
+EOF'
+  sudo bash -c 'cat << EOF > $INITIATOR_CFG_DIR/ipsec.secrets
 : PSK "Vpp123"
-EOF
+EOF'
 }
 
 responder_conf
@@ -105,21 +106,21 @@ initiator_conf
 grpc_conf
 
 # vpp-agent prerequisites (kafka + etcd)
-docker run --name kafka -p 9092:9092 -d --rm spotify/kafka
-docker run --name etcd -p 2379:2379 -d --rm quay.io/coreos/etcd:v3.1.0 /usr/local/bin/etcd
+sudo docker run --name kafka -p 9092:9092 -d --rm spotify/kafka
+sudo docker run --name etcd -p 2379:2379 -d --rm quay.io/coreos/etcd:v3.1.0 /usr/local/bin/etcd
 sleep 1
 
 # responder aka vpn server (gateway)
-docker run --name responder -d --rm --net=host --privileged -it -v $AGENT_CFG_DIR:/opt/vpp-agent/dev ligato/vpp-agent
+sudo docker run --name responder -d --rm --net=host --privileged -it -v $AGENT_CFG_DIR:/opt/vpp-agent/dev ligato/vpp-agent
 
 # initiator aka vpn client
-docker run --name initiator -d --rm --privileged -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan
+sudo docker run --name initiator -d --rm --privileged -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan
 
 # dummy network behind vpn
 sleep 2
-docker exec responder vppctl -s localhost:5002 tap connect tap0
-docker exec responder vppctl -s localhost:5002 set int state tapcli-0 up
-docker exec responder vppctl -s localhost:5002 set int ip address tapcli-0 10.10.10.1/24
+sudo docker exec responder vppctl -s localhost:5002 tap connect tap0
+sudo docker exec responder vppctl -s localhost:5002 set int state tapcli-0 up
+sudo docker exec responder vppctl -s localhost:5002 set int ip address tapcli-0 10.10.10.1/24
 
 # if we register veth interface in docker namespace docker will automatically
 # delete the interface after container is destroied
@@ -128,19 +129,19 @@ docker exec responder vppctl -s localhost:5002 set int ip address tapcli-0 10.10
 # 1) create veth pair
 sudo ip link add wan0 type veth peer name wan1
 # 2) add one side of the veth pair to responder
-docker exec responder vppctl -s localhost:5002 create host-interface name wan0
-docker exec responder vppctl -s localhost:5002 set int state host-wan0 up
-docker exec responder vppctl -s localhost:5002 set int ip address host-wan0 172.16.0.2/24
+sudo docker exec responder vppctl -s localhost:5002 create host-interface name wan0
+sudo docker exec responder vppctl -s localhost:5002 set int state host-wan0 up
+sudo docker exec responder vppctl -s localhost:5002 set int ip address host-wan0 172.16.0.2/24
 # 3) add other side of the veth pair to the initiator container
 sudo ip link set netns $(docker inspect --format '{{.State.Pid}}' initiator) dev wan1
-docker exec initiator ip addr add 172.16.0.1/24 dev wan1
-docker exec initiator ip link set wan1 up
+sudo docker exec initiator ip addr add 172.16.0.1/24 dev wan1
+sudo docker exec initiator ip link set wan1 up
 
 # 1) try to connect to responder over ikev2 vpn
-# docker exec initiator ipsec up initiator
+# sudo docker exec initiator ipsec up initiator
 
 # to debug (responder):
-# docker exec -it responder vppctl -s localhost:5002
+# sudo docker exec -it responder vppctl -s localhost:5002
 # to debug (initiator):
-# docker exec -it initiator /bin/bash
+# sudo docker exec -it initiator /bin/bash
 
