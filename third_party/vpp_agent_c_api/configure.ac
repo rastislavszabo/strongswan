@@ -9,8 +9,9 @@ AC_CONFIG_HEADERS([config.h])
 AC_PROG_CC
 AM_PROG_CC_C_O
 AC_PROG_LIBTOOL
+AC_PROG_INSTALL
 
-LT_INIT
+LT_INIT([shared])
 AM_INIT_AUTOMAKE([1.14 foreign subdir-objects])
 
 AC_CONFIG_FILES([Makefile])
