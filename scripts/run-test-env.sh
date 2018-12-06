@@ -14,8 +14,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+VPP_CFG_DIR="/tmp/vpp"
 AGENT_CFG_DIR="/tmp/vpp-agent"
 INITIATOR_CFG_DIR="/tmp/initiator"
+
+vpp_conf() {
+  sudo mkdir -p $VPP_CFG_DIR
+  sudo bash -c "cat << EOF > $VPP_CFG_DIR/vpp.conf
+unix {
+  nodaemon
+  cli-listen 0.0.0.0:5002
+  cli-no-pager
+}
+plugins {
+  plugin dpdk_plugin.so {
+    disable
+  }
+}
+punt {
+  socket /etc/vpp/punt.sock
+}
+EOF"
+}
 
 grpc_conf() {
   sudo mkdir -p $AGENT_CFG_DIR
@@ -104,9 +124,10 @@ EOF"
 responder_conf
 initiator_conf
 grpc_conf
+vpp_conf
 
 # responder aka vpn server (gateway)
-sudo docker run --name responder -d --rm --net=host --privileged -it -e ETCD_CONFIG=DISABLED -e KAFKA_CONFIG=DISABLED -v $AGENT_CFG_DIR:/opt/vpp-agent/dev ligato/vpp-agent
+sudo docker run --name responder -d --rm --net=host --privileged -it -e INITIAL_LOGLVL=debug -e ETCD_CONFIG=DISABLED -e KAFKA_CONFIG=DISABLED -v $VPP_CFG_DIR:/etc/vpp -v $AGENT_CFG_DIR:/opt/vpp-agent/dev ligato/vpp-agent:pantheon-dev
 
 # initiator aka vpn client
 sudo docker run --name initiator -d --rm --privileged -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan
