@@ -614,6 +614,14 @@ static void process_iface_event(private_kernel_vpp_net_t *this,
     enumerator = this->ifaces->create_enumerator(this->ifaces);
     while (enumerator->enumerate(enumerator, &entry))
     {
+        DBG2(DBG_KNL, "iface name: %s", iface->name ? iface->name : "NULL");
+        DBG2(DBG_KNL, "iface internal_name: %s", iface->internal_name ? iface->internal_name : "NULL");
+
+        if (!iface->name)
+        {
+            continue;
+        }
+
         if (!strncmp(entry->if_name, iface->name, sizeof(entry->if_name)))
         {
             int is_up = iface->admin_status == EV_STATUS_UP ? TRUE : FALSE;

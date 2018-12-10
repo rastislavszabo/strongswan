@@ -22,6 +22,7 @@
 #include "kernel_vpp_ipsec.h"
 #include "kernel_vpp_grpc.h"
 
+#include <errno.h>
 #include <string.h>
 
 #define IPV4_SZ 4
@@ -370,6 +371,7 @@ char *chunk_to_ipv4(chunk_t address)
 
     if (address.len != IPV4_SZ)
     {
+        DBG2(DBG_KNL, "ip address unsupported size");
         return NULL;
     }
 
@@ -379,12 +381,14 @@ char *chunk_to_ipv4(chunk_t address)
         return NULL;
     }
 
-    memcpy(&(addr.s_addr), &(address.ptr), IPV4_SZ); 
+    memcpy(&(addr.s_addr), address.ptr, IPV4_SZ); 
     if (inet_ntop(AF_INET, &addr, ipv4, INET_ADDRSTRLEN * sizeof(char)) == NULL)
     {
         free(ipv4);
+        DBG2(DBG_KNL, "inet_ntop error: %s", strerror(errno));
         return NULL;
     }
+    DBG1(DBG_KNL, "convert: ipv4 addr %s", ipv4);
     return ipv4;
 }
 
@@ -424,6 +428,36 @@ static status_t get_tunnel_name(tunnel_t *tp)
         }
     }
     return FAILED;
+}
+
+/**
+ * Set unnumbered interface
+ */
+static status_t set_tunnel_address(tunnel_t *tp)
+{
+    Ipsec__TunnelInterfaces__Tunnel tunnel = IPSEC__TUNNEL_INTERFACES__TUNNEL__INIT;
+    Ipsec__TunnelInterfaces__Tunnel *tunnels[1];
+
+    Rpc__DataRequest req = RPC__DATA_REQUEST__INIT;
+    Rpc__PutResponse *rsp = NULL;
+
+    req.tunnels = tunnels;
+    req.tunnels[0] = &tunnel;
+    req.n_tunnels = 1;
+
+    status_t rc;
+
+    tunnel.name = tp->if_name;
+    tunnel.unnumbered_name = tp->un_if_name;
+
+    rc = vac->put(vac, &req, &rsp); 
+    if (rc == FAILED)
+    {
+        DBG1(DBG_KNL, "error running put rpc request");
+        return FAILED;
+    }
+
+    return SUCCESS;
 }
 
 /**
@@ -528,11 +562,8 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
                .if_name = NULL,
                .un_if_name = name,
                .src_spi = id->spi,
-
-               // TODO: this could be reversed be sure to test
-               .src_addr = chunk_to_ipv4(id->src->get_address(id->src)),
-               .dst_addr = chunk_to_ipv4(id->src->get_address(id->dst)),       
-
+               .src_addr = chunk_to_ipv4(id->src->get_address(id->dst)),
+               .dst_addr = chunk_to_ipv4(id->src->get_address(id->src)),
                .enc_alg = vpp_enc_alg,
                .int_alg = vpp_int_alg,
                .src_enc_key = enc_key.ptr,
@@ -560,7 +591,6 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
         }
 
         DBG1(DBG_KNL, "outbound SA received");
-        dump_tunnel(tunnel);
 
         enc_key = chunk_to_hex(data->enc_key, NULL, 0);
         int_key = chunk_to_hex(data->int_key, NULL, 0);
@@ -576,6 +606,15 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
             DBG1(DBG_KNL, "error creating tunnel interface");
             return FAILED;
         }
+
+        if (set_tunnel_address(tunnel) == FAILED)
+        {
+            free_tunnel(tunnel);
+            DBG1(DBG_KNL, "error configuring tunnel interface address");
+            return FAILED;
+        }
+
+        dump_tunnel(tunnel);
 
         // hash based on outbound (remote/destination)
         kernel_ipsec_sa_id_t sa_id = {

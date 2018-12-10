@@ -154,6 +154,11 @@ EOF"
 EOF"
 }
 
+make
+if [ $? -eq 0 ]; then
+
+sudo make install &> /dev/null
+
 responder_conf
 initiator_conf
 grpc_conf
@@ -192,3 +197,4 @@ sudo docker exec initiator ip link set wan1 up
 sleep 2
 sudo ipsec start
 
+fi
