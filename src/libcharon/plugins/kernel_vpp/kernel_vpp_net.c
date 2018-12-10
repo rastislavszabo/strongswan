@@ -534,6 +534,7 @@ static void update_interfaces(private_kernel_vpp_net_t *this,
     Interfaces__Interfaces__Interface *iface;
     bool exists = FALSE;
     iface_t *entry;
+    char *name;
 
     if (!rp)
         return;
@@ -544,13 +545,26 @@ static void update_interfaces(private_kernel_vpp_net_t *this,
     {
         iface = rp->interfaces[i];
 
+        switch (iface->type)
+        {
+            case INTERFACES__INTERFACE_TYPE__TAP_INTERFACE:
+                name = iface->tap->host_if_name;
+                break;
+            case INTERFACES__INTERFACE_TYPE__AF_PACKET_INTERFACE:
+                name = iface->afpacket->host_if_name;
+                break;
+            default:
+                name = NULL;
+        }
+
         DBG2(DBG_KNL, "\n\niface [%d]", i);
-        DBG2(DBG_KNL, "iface name: %s", iface->name ? iface->name : "NULL");
+        DBG2(DBG_KNL, "iface name: %s", name ? name : "NULL");
         DBG2(DBG_KNL, "iface mac: %s", iface->phys_address ? iface->phys_address : "NULL");
+        DBG2(DBG_KNL, "iface type: %d", iface->type);
         DBG2(DBG_KNL, "iface enabled: %d", iface->enabled);
         DBG2(DBG_KNL, "iface ip num: %d", iface->n_ip_addresses);
 
-        if (!iface->name)
+        if (!name)
         {
             DBG2(DBG_KNL, "!!! iface is NULL !!!");
             continue;
@@ -559,7 +573,7 @@ static void update_interfaces(private_kernel_vpp_net_t *this,
         exists = FALSE;
         while (enumerator->enumerate(enumerator, &entry))
         {
-            if (!strncmp(entry->if_name, iface->name, sizeof(entry->if_name)))
+            if (!strncmp(entry->if_name, name, sizeof(entry->if_name)))
             {
                 exists = TRUE;
                 break;
@@ -573,7 +587,7 @@ static void update_interfaces(private_kernel_vpp_net_t *this,
                     .addrs = linked_list_create()
             );
 
-            strncpy(entry->if_name, iface->name, sizeof(entry->if_name));
+            strncpy(entry->if_name, name, sizeof(entry->if_name));
             DBG2(DBG_KNL, "IF %s %s", entry->if_name,
                  entry->up ? "UP" : "DOWN");
             this->ifaces->insert_last(this->ifaces, entry);

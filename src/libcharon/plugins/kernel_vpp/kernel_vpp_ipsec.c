@@ -515,8 +515,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
             return NOT_SUPPORTED;
         }
 
-        // TODO: this could be reversed be sure to test
-        if (!charon->kernel->get_interface(charon->kernel, id->src, &name))
+        if (!charon->kernel->get_interface(charon->kernel, id->dst, &name))
         {
             DBG1(DBG_KNL, "unable to get interface");
             return FAILED;

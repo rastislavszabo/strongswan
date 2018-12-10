@@ -14,9 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-VPP_CFG_DIR="/tmp/vpp"
+#VPP_CFG_DIR="/tmp/vpp"
+VPP_CFG_DIR="/etc/vpp"
 AGENT_CFG_DIR="/tmp/vpp-agent"
+
+RESPONDER_CFG_DIR="/etc"
 INITIATOR_CFG_DIR="/tmp/initiator"
+#INITIATOR_CFG_DIR2=
+
+# switch over roles
+#INITIATOR_CFG_DIR="/etc"
+#RESPONDER_CFG_DIR="/tmp/initiator"
 
 vpp_conf() {
   sudo mkdir -p $VPP_CFG_DIR
@@ -63,13 +71,14 @@ EOF"
 }
 
 responder_conf() {
-  sudo bash -c "cat << EOF > /etc/ipsec.conf
+  sudo mkdir -p $RESPONDER_CFG_DIR
+  sudo bash -c "cat << EOF > $RESPONDER_CFG_DIR/ipsec.conf
+config setup
+  strictcrlpolicy=no
+
 conn responder
-# defaults?
+  mobike=no
   auto=add
-  compress=no
-  fragmentation=yes
-  forceencaps=yes
 
   type=tunnel
   keyexchange=ikev2
@@ -83,10 +92,11 @@ conn responder
   leftsubnet=10.10.10.0/24
 
 # remote: (roadwarrior)
+#  right=172.16.0.1
   rightauth=psk
 
 EOF"
-  sudo bash -c "cat << EOF > /etc/ipsec.secrets
+  sudo bash -c "cat << EOF > $RESPONDER_CFG_DIR/ipsec.secrets
 : PSK 'Vpp123'
 EOF"
 }
@@ -94,12 +104,12 @@ EOF"
 initiator_conf() {
   sudo mkdir -p $INITIATOR_CFG_DIR
   sudo bash -c "cat << EOF > $INITIATOR_CFG_DIR/ipsec.conf
+config setup
+  strictcrlpolicy=no
+
 conn initiator
-# defaults?
+  mobike=no
   auto=add
-  compress=no
-  fragmentation=yes
-  forceencaps=yes
 
   type=tunnel
   keyexchange=ikev2
@@ -107,6 +117,7 @@ conn initiator
   esp=aes192-sha1-esn!
 
 # local:
+#  left=172.16.0.1
   leftauth=psk
 
 # remote: (gateway)
@@ -115,6 +126,28 @@ conn initiator
 
   rightsubnet=10.10.10.0/24
 
+EOF"
+  sudo bash -c "cat << EOF > $INITIATOR_CFG_DIR/strongswan.conf
+charon {
+  load_modular = yes
+  plugins {
+    include strongswan.d/charon/*.conf
+    attr {
+      dns = 8.8.8.8, 8.8.4.4
+    }
+  }
+  filelog {
+    charon {
+      path=/var/log/charon.log
+      time_format = %b %e %T
+      ike_name = yes
+      append = no
+      default = 4
+      flush_line = yes
+    }
+  }
+}
+include strongswan.d/*.conf
 EOF"
   sudo bash -c "cat << EOF > $INITIATOR_CFG_DIR/ipsec.secrets
 : PSK 'Vpp123'
@@ -130,7 +163,10 @@ vpp_conf
 sudo docker run --name responder -d --rm --net=host --privileged -it -e INITIAL_LOGLVL=debug -e ETCD_CONFIG=DISABLED -e KAFKA_CONFIG=DISABLED -v $VPP_CFG_DIR:/etc/vpp -v $AGENT_CFG_DIR:/opt/vpp-agent/dev ligato/vpp-agent:pantheon-dev
 
 # initiator aka vpn client
-sudo docker run --name initiator -d --rm --privileged -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan
+#sudo docker run --name responder -d --rm --privileged -v $INITIATOR_CFG_DIR:/conf -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan
+
+# initiator aka vpn client
+sudo docker run --name initiator -d --rm --privileged -v $INITIATOR_CFG_DIR:/conf -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan
 
 # dummy network behind vpn
 sleep 2
@@ -153,11 +189,6 @@ sudo ip link set netns $(docker inspect --format '{{.State.Pid}}' initiator) dev
 sudo docker exec initiator ip addr add 172.16.0.1/24 dev wan1
 sudo docker exec initiator ip link set wan1 up
 
-# 1) try to connect to responder over ikev2 vpn
-# sudo docker exec initiator ipsec up initiator
-
-# to debug (responder):
-# sudo docker exec -it responder vppctl -s localhost:5002
-# to debug (initiator):
-# sudo docker exec -it initiator /bin/bash
+sleep 2
+sudo ipsec start
 
