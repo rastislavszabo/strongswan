@@ -59,7 +59,7 @@ METHOD(vac_t, vac_put, status_t, private_vac_t *this,
             0, /* flags */
             rq,
             rp,
-            NULL /* status */,
+            NULL /* status, ignored due to vpp-agent not filling it */,
             -1 /* timeout */);
 
     return rpc_status ? FAILED : SUCCESS;
@@ -73,7 +73,7 @@ METHOD(vac_t, vac_del, status_t, private_vac_t *this,
             0, /* flags */
             rq,
             rp,
-            NULL /* status */,
+            NULL /* status, ignored due to vpp-agent not filling it */,
             -1 /* timeout */);
 
     return rpc_status ? FAILED : SUCCESS;
@@ -87,7 +87,7 @@ METHOD(vac_t, vac_dump_interfaces, status_t, private_vac_t *this,
             0, /* flags */
             &rq,
             rp,
-            NULL /* status */,
+            NULL /* status, ignored due to vpp-agent not filling it */,
             -1 /* timeout */);
     return rpc_status ? FAILED : SUCCESS;
 }
@@ -101,7 +101,7 @@ METHOD(vac_t, vac_dump_routes, status_t, private_vac_t *this,
             0, /* flags */
             &rq,
             rp,
-            NULL /* status */,
+            NULL /* status, ignored due to vpp-agent not filling it */,
             -1 /* timeout */);
     return rpc_status ? FAILED : SUCCESS;
 }
@@ -115,7 +115,7 @@ METHOD(vac_t, vac_dump_ipsec_tunnels, status_t, private_vac_t *this,
             0, /* flags */
             &rq,
             rp,
-            NULL /* status */,
+            NULL /* status, ignored due to vpp-agent not filling it */,
             -1 /* timeout */);
     return rpc_status ? FAILED : SUCCESS;
 }
@@ -149,7 +149,7 @@ METHOD(vac_t, vac_dump_punts, status_t, private_vac_t *this,
             0, /* flags */
             &rq,
             rp,
-            NULL /* status */,
+            NULL /* status, ignored due to vpp-agent not filling it */,
             -1 /* timeout */);
     return rpc_status ? FAILED : SUCCESS;
 }
