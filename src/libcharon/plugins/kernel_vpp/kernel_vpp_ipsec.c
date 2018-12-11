@@ -13,6 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+#define _GNU_SOURCE
+#include <stdio.h>
+
 #include <daemon.h>
 #include <utils/debug.h>
 #include <collections/hashtable.h>
@@ -27,6 +31,8 @@
 
 #define IPV4_SZ 4
 #define PRIO_BASE 384
+#define MAX_UINT32_LEN 10
+#define IF_NAME_PREFIX "tun-"
 
 typedef struct private_kernel_vpp_ipsec_t private_kernel_vpp_ipsec_t;
 
@@ -74,6 +80,11 @@ struct private_kernel_vpp_ipsec_t {
      * Whether to install routes along policies
      */
     bool manage_routes;
+
+    /**
+     * Next tunnel index
+     */
+    uint32_t next_index;
 };
 
 /**
@@ -277,7 +288,7 @@ static status_t delete_tunnel(tunnel_t *tp)
     rc = vac->del(vac, &req, &rsp); 
     if (rc == FAILED)
     {
-        DBG1(DBG_KNL, "error running del rpc request");
+        DBG1(DBG_KNL, "kernel_vpp: error communicating with grpc");
         return FAILED;
     }
 
@@ -301,10 +312,11 @@ static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
     if ((data->type != POLICY_IPSEC) || !data->sa ||
         (data->sa->mode != MODE_TUNNEL))
     {
-        DBG1(DBG_KNL, "unsupported SA received");
+        DBG1(DBG_KNL, "kernel_vpp: unsupported SA received");
         return NOT_SUPPORTED;
     }
 
+    // we ignore POLICY_OUT
     if (id->dir != POLICY_OUT)
     {
         return SUCCESS;
@@ -348,12 +360,15 @@ static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
         rc = charon->kernel->del_route(charon->kernel, dst_net->get_address(
                                        dst_net), pfx_len, data->dst, NULL,
                                        tunnel->if_name);
-        // TODO: test output
-        delete_tunnel(tunnel);
+        if (delete_tunnel(tunnel) != SUCCESS)
+        {
+            DBG1(DBG_KNL, "kernel_vpp: error deleting tunnel");
+            rc = FAILED;
+        }
         free_tunnel(tunnel);
     }
 
-    DBG2(DBG_KNL, "(%s) %s route %H/%d via tunnel interface %s",
+    DBG1(DBG_KNL, "(%s) %s route %H/%d via tunnel interface %s",
          rc == SUCCESS ? "success" : "failure",
          op == ROUTE_ADD ? "add" : "del",
          dst_net, pfx_len, tunnel->if_name);
@@ -392,44 +407,8 @@ char *chunk_to_ipv4(chunk_t address)
     return ipv4;
 }
 
-/**
- * Lookup tunnel interface name
- */
-static status_t get_tunnel_name(tunnel_t *tp)
-{
-    Ipsec__TunnelInterfaces__Tunnel *tunnel = NULL;
-    Rpc__IPSecTunnelResponse *rsp = NULL;
 
-    status_t rc;
-    size_t n;
-
-    rc = vac->dump_ipsec_tunnels(vac, &rsp);
-    if (rc == SUCCESS)
-    {
-        n = rsp->n_tunnels;
-
-        for (n = 0; n < rsp->n_tunnels; n++)
-        {
-            tunnel = rsp->tunnels[n];
-
-            if (!tunnel->local_ip || !tunnel->remote_ip ||
-                (tunnel->local_spi != tp->src_spi) ||
-                (tunnel->remote_spi != tp->dst_spi))
-            {
-                continue;
-            }
-
-            if ((strcmp(tp->src_addr, tunnel->local_ip) == 0) &&
-                (strcmp(tp->dst_addr, tunnel->remote_ip) == 0))
-            {
-                tp->if_name = strdup(tunnel->name);
-                return SUCCESS;
-            }
-        }
-    }
-    return FAILED;
-}
-
+#if 0
 /**
  * Set unnumbered interface
  */
@@ -459,6 +438,7 @@ static status_t set_tunnel_address(tunnel_t *tp)
 
     return SUCCESS;
 }
+#endif
 
 /**
  * Create tunnel interface
@@ -483,6 +463,8 @@ static status_t create_tunnel(tunnel_t *tp)
     tunnel.has_integ_alg = TRUE;
     tunnel.has_crypto_alg = TRUE;
 
+    tunnel.name = tp->if_name;
+
     tunnel.enabled = TRUE;
     tunnel.unnumbered_name = tp->un_if_name;
 
@@ -506,9 +488,7 @@ static status_t create_tunnel(tunnel_t *tp)
         return FAILED;
     }
 
-    // get tunnel name (it also checks if
-    // the tunnel was actually created)
-    return get_tunnel_name(tp);
+    return SUCCESS;
 }
 
 METHOD(kernel_ipsec_t, add_sa, status_t,
@@ -521,9 +501,10 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
     chunk_t enc_key;
     chunk_t int_key;
 
+    char *if_name, *un_if_name;
     tunnel_t *tunnel;
     status_t rc;
-    char *name;
+    size_t len;
 
     if (data->mode != MODE_TUNNEL)
     {
@@ -536,7 +517,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
         rc = convert_enc_alg(data->enc_alg, data->enc_key, &vpp_enc_alg);
         if (rc != SUCCESS)
         {
-            DBG1(DBG_KNL, "algorithm %N not supported by VPP!",
+            DBG1(DBG_KNL, "kernel_vpp: algorithm %N not supported by VPP!",
                  encryption_algorithm_names, data->enc_alg);
             return NOT_SUPPORTED;
         }
@@ -544,23 +525,29 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
         rc = convert_int_alg(data->int_alg, &vpp_int_alg);
         if (rc != SUCCESS)
         {
-            DBG1(DBG_KNL, "algorithm %N not supported by VPP!",
+            DBG1(DBG_KNL, "kernel_vpp: algorithm %N not supported by VPP!",
                  integrity_algorithm_names, data->int_alg);
             return NOT_SUPPORTED;
         }
 
-        if (!charon->kernel->get_interface(charon->kernel, id->dst, &name))
+        if (!charon->kernel->get_interface(charon->kernel, id->dst, &un_if_name))
         {
-            DBG1(DBG_KNL, "unable to get interface");
+            DBG1(DBG_KNL, "kernel_vpp: unable to get interface");
             return FAILED;
         }
 
         enc_key = chunk_to_hex(data->enc_key, NULL, 0);
         int_key = chunk_to_hex(data->int_key, NULL, 0);
 
+        this->mutex->lock(this->mutex);
+
+        len = strlen(IF_NAME_PREFIX) + MAX_UINT32_LEN + 1;
+        if_name = malloc(sizeof(char) * len);
+        snprintf(if_name, len, "%s%d", IF_NAME_PREFIX, this->next_index++);
+
         INIT(tunnel,
-               .if_name = NULL,
-               .un_if_name = name,
+               .if_name = if_name,
+               .un_if_name = un_if_name,
                .src_spi = id->spi,
                .src_addr = chunk_to_ipv4(id->src->get_address(id->dst)),
                .dst_addr = chunk_to_ipv4(id->src->get_address(id->src)),
@@ -570,27 +557,25 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
                .src_int_key = int_key.ptr
             );
 
-        // reqid is unique for each entry (2xSA + SP)
-        this->mutex->lock(this->mutex);
         this->cache->put(this->cache, (void *)(uintptr_t)data->reqid, tunnel);
         this->mutex->unlock(this->mutex);
 
-        DBG1(DBG_KNL, "inboud SA received");
+        DBG1(DBG_KNL, "kernel_vpp: success caching tunnel, received inboud SA");
         dump_tunnel(tunnel);
     }
     else
     {
         this->mutex->lock(this->mutex);
-        tunnel = this->cache->remove(this->cache, (void *)(uintptr_t)data->reqid);
+        tunnel = this->cache->remove(this->cache,
+                                     (void *)(uintptr_t)data->reqid);
         this->mutex->unlock(this->mutex);
 
         if (!tunnel)
         {
-            DBG1(DBG_KNL, "error adding tunnel, missing inbound SA");
+            DBG1(DBG_KNL, "kernel_vpp: error adding tunnel,"
+                          "missing inbound SA");
             return NOT_FOUND;
         }
-
-        DBG1(DBG_KNL, "outbound SA received");
 
         enc_key = chunk_to_hex(data->enc_key, NULL, 0);
         int_key = chunk_to_hex(data->int_key, NULL, 0);
@@ -603,17 +588,12 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
         if (create_tunnel(tunnel) == FAILED)
         {
             free_tunnel(tunnel);
-            DBG1(DBG_KNL, "error creating tunnel interface");
+            DBG1(DBG_KNL, "kernel_vpp: error creating tunnel");
             return FAILED;
         }
 
-        if (set_tunnel_address(tunnel) == FAILED)
-        {
-            free_tunnel(tunnel);
-            DBG1(DBG_KNL, "error configuring tunnel interface address");
-            return FAILED;
-        }
-
+        DBG1(DBG_KNL, "kernel_vpp: success creating tunnel,"
+                      "received outbound SA");
         dump_tunnel(tunnel);
 
         // hash based on outbound (remote/destination)
@@ -835,7 +815,6 @@ kernel_vpp_ipsec_t *kernel_vpp_ipsec_create()
         },
         .mutex = mutex_create(MUTEX_TYPE_DEFAULT),
         .cache = hashtable_create(hashtable_hash_ptr, hashtable_equals_ptr, 4),
-        // TODO: check if it can be used like this
         .tunnels = hashtable_create((hashtable_hash_t)tunnel_hash,
                                     hashtable_equals_ptr, 32),
         .manage_routes = lib->settings->get_bool(lib->settings,
