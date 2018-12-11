@@ -175,26 +175,15 @@ sudo docker run --name initiator -d --rm --privileged -v $INITIATOR_CFG_DIR:/con
 
 # dummy network behind vpn
 sleep 2
-sudo docker exec responder vppctl -s localhost:5002 tap connect tap0
-sudo docker exec responder vppctl -s localhost:5002 set int state tapcli-0 up
-sudo docker exec responder vppctl -s localhost:5002 set int ip address tapcli-0 10.10.10.1/24
-
-# if we register veth interface in docker namespace docker will automatically
-# delete the interface after container is destroied
-# alternatively try to remove the interface: sudo ip link del wan0
 
 # 1) create veth pair
 sudo ip link add wan0 type veth peer name wan1
-# 2) add one side of the veth pair to responder
-sudo docker exec responder vppctl -s localhost:5002 create host-interface name wan0
-sudo docker exec responder vppctl -s localhost:5002 set int state host-wan0 up
-sudo docker exec responder vppctl -s localhost:5002 set int ip address host-wan0 172.16.0.2/24
-# 3) add other side of the veth pair to the initiator container
-sudo ip link set netns $(docker inspect --format '{{.State.Pid}}' initiator) dev wan1
+sudo ip link set netns $(sudo docker inspect --format '{{.State.Pid}}' initiator) dev wan1
 sudo docker exec initiator ip addr add 172.16.0.1/24 dev wan1
 sudo docker exec initiator ip link set wan1 up
 
-sleep 2
+grpc_demo_setup
+
 sudo ipsec start
 
 fi

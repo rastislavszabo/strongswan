@@ -19,3 +19,9 @@ libvpp_agent_api_la_SOURCES = \
 	linux/model/l3/l3.grpc-c.c
 
 libvpp_agent_api_la_LIBADD = -lgpr -lgrpc -lprotobuf-c -lprotobuf -lprotobuf-c
+
+bin_PROGRAMS = grpc_demo_setup
+
+grpc_demo_setup_SOURCES = grpc_demo_setup.c
+
+grpc_demo_setup_LDADD = -lvpp-agent-api -lgrpc -lgrpc-c -lprotobuf -lprotobuf

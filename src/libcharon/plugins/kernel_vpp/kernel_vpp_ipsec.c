@@ -505,6 +505,7 @@ static status_t create_tunnel(tunnel_t *tp)
         DBG1(DBG_KNL, "error running put rpc request");
         return FAILED;
     }
+    sleep(3);
 
     // get tunnel name (it also checks if
     // the tunnel was actually created)
