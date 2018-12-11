@@ -154,39 +154,69 @@ EOF"
 EOF"
 }
 
-make
-if [ $? -eq 0 ]; then
+start() {
+  echo "info: building strongswan"
+  make &> /dev/null
+  if [ $? -ne 0 ]; then
+    echo "error: building strongswan"
+    exit 1
+  fi
 
-sudo make install &> /dev/null
+  echo "info: installing strongswan"
+  sudo make install &> /dev/null
 
-responder_conf
-initiator_conf
-grpc_conf
-vpp_conf
+  responder_conf
+  initiator_conf
+  grpc_conf
+  vpp_conf
 
-# responder aka vpn server (gateway)
-sudo docker run --name responder -d --net=host --privileged -it -e INITIAL_LOGLVL=debug -e ETCD_CONFIG=DISABLED -e KAFKA_CONFIG=DISABLED -v $VPP_CFG_DIR:/etc/vpp -v $AGENT_CFG_DIR:/opt/vpp-agent/dev ligato/vpp-agent:pantheon-dev
+  echo "info: starting docker containers"
+  (sudo docker run --name responder -d --net=host --privileged -it -e INITIAL_LOGLVL=debug -e ETCD_CONFIG=DISABLED -e KAFKA_CONFIG=DISABLED -v $VPP_CFG_DIR:/etc/vpp -v $AGENT_CFG_DIR:/opt/vpp-agent/dev ligato/vpp-agent:pantheon-dev && sudo docker run --name initiator -d --privileged -v $INITIATOR_CFG_DIR:/conf -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan) &> /dev/null
+  if [ $? -ne 0 ]; then
+    echo "error: starting docker containers"
+    exit 1
+  fi
 
-# initiator aka vpn client
-#sudo docker run --name responder -d --rm --privileged -v $INITIATOR_CFG_DIR:/conf -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan
+  echo "info: waiting for serivces"
+  sleep 2
 
-# initiator aka vpn client
-sudo docker run --name initiator -d --privileged -v $INITIATOR_CFG_DIR:/conf -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan
+  echo "info: configuring network"
+  (sudo ip link add wan0 type veth peer name wan1 && sudo ip link set netns $(sudo docker inspect --format '{{.State.Pid}}' initiator) dev wan1 && sudo docker exec initiator ip addr add 172.16.0.1/24 dev wan1 && sudo docker exec initiator ip link set wan1 up && grpc_demo_setup) &> /dev/null
+  if [ $? -ne 0 ]; then
+    echo "error: configuring network"
+    exit 1
+  fi
 
-# dummy network behind vpn
-sleep 2
+  echo "info: starting ipsec"
+  sudo ipsec start &> /dev/null
 
-# 1) create veth pair
-sudo ip link add wan0 type veth peer name wan1
-sudo ip link set netns $(sudo docker inspect --format '{{.State.Pid}}' initiator) dev wan1
-sudo docker exec initiator ip addr add 172.16.0.1/24 dev wan1
-sudo docker exec initiator ip link set wan1 up
+  echo "info: waiting for strongswan"
+  sleep 6
+  sudo docker exec initiator ipsec up initiator
+}
 
-grpc_demo_setup
+stop() {
+  sudo docker stop initiator &> /dev/null
+  sudo docker container rm initiator &> /dev/null
 
-sudo ipsec start
+  sudo docker stop responder &> /dev/null
+  sudo docker container rm responder &> /dev/null
 
-sleep 4
-sudo docker exec initiator ipsec up initiator
+  sudo ipsec stop &> /dev/null
+}
 
-fi
+
+case "$1" in
+  start)
+        start
+        ;;
+  stop)
+        stop
+        ;;
+  *)
+        echo $"Usage: $0 {start|stop}"
+        exit 1
+esac
+
+exit 0
+
