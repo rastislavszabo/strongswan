@@ -8,11 +8,13 @@ if: tag IS blank
 
 compiler:
   - gcc
-  - clang
+    #   disable clang for now as some dependencies won't build with clang
+    #  - clang
 
 cache: ccache
 
 before_install:
+  - ./build_dependencies.sh
   - travis_retry ./scripts/test.sh deps
   - travis_retry ./scripts/test.sh pydeps
 

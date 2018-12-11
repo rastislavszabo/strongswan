@@ -24,6 +24,7 @@ libtool
 *.l[ao]
 *.[ao]
 *.exe
+*.swp
 y.tab.[ch]
 lex.yy.c
 *keywords.c
@@ -46,6 +47,7 @@ coverage/
 .project
 .metadata/
 .settings/
+cscope.*
 /*.config
 /*.creator
 /*.creator.*

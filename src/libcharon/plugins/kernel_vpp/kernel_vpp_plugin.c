@@ -14,18 +14,9 @@
  * limitations under the License.
  */
 #include <utils/debug.h>
-#include <vlibapi/api.h>
-#include <vlibmemory/api.h>
-#include <vpp/api/vpe_msg_enum.h>
-
-#define vl_typedefs
-#define vl_endianfun
-#include <vpp/api/vpe_all_api_h.h>
-#undef vl_typedefs
-#undef vl_endianfun
 
 #include "kernel_vpp_plugin.h"
-#include "kernel_vpp_shared.h"
+#include "kernel_vpp_grpc.h"
 #include "kernel_vpp_ipsec.h"
 #include "kernel_vpp_net.h"
 
