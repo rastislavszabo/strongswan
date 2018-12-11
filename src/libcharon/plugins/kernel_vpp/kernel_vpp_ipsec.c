@@ -14,9 +14,6 @@
  * limitations under the License.
  */
 
-#define _GNU_SOURCE
-#include <stdio.h>
-
 #include <daemon.h>
 #include <utils/debug.h>
 #include <collections/hashtable.h>
@@ -155,6 +152,36 @@ typedef struct {
 
 } tunnel_t;
 
+/**
+ * Convert chunk to ipv4 address
+ */
+char *chunk_to_ipv4(chunk_t address)
+{
+    struct in_addr addr;
+    char *ipv4;
+
+    if (address.len != IPV4_SZ)
+    {
+        DBG2(DBG_KNL, "kernel_vpp: ip address unsupported size");
+        return NULL;
+    }
+
+    ipv4 = calloc(INET_ADDRSTRLEN, sizeof(char));
+    if (ipv4 == NULL)
+    {
+        return NULL;
+    }
+
+    memcpy(&(addr.s_addr), address.ptr, IPV4_SZ); 
+    if (inet_ntop(AF_INET, &addr, ipv4, INET_ADDRSTRLEN * sizeof(char)) == NULL)
+    {
+        free(ipv4);
+        DBG2(DBG_KNL, "kernel_vpp: inet_ntop error: %s", strerror(errno));
+        return NULL;
+    }
+    return ipv4;
+}
+
 static void free_tunnel(tunnel_t *tunnel)
 {
     if (tunnel->if_name)
@@ -181,10 +208,10 @@ static void free_tunnel(tunnel_t *tunnel)
  */
 static void dump_tunnel(tunnel_t *tp)
 {
-    const char *q = "?";
-    DBG1(DBG_KNL, "if_name: %s, un_if_name: %s, src_spi: %d, dst_spi: %d" \
-                  "src_addr: %s, dst_addr: %s, enc_alg: %d, int_alg: %d" \
-                  "src_enc_key: %s, dst_enc_key: %s," \
+    const char *q = "NULL";
+    DBG1(DBG_KNL, "if_name: %s, un_if_name: %s, src_spi: %u, dst_spi: %u, " \
+                  "src_addr: %s, dst_addr: %s, enc_alg: %d, int_alg: %d, " \
+                  "src_enc_key: %s, dst_enc_key: %s, " \
                   "src_int_key: %s, dst_int_key: %s",
                   tp->if_name ? tp->if_name : q, 
                   tp->un_if_name ? tp->un_if_name : q,
@@ -198,13 +225,45 @@ static void dump_tunnel(tunnel_t *tp)
                   tp->dst_int_key ? tp->dst_int_key : q);
 }
 
-/**
- * Hash function for IPsec Tunnel Interface
- */
-static u_int tunnel_hash(kernel_ipsec_sa_id_t *sa)
+#if 0
+static void dump_tunnels(private_kernel_vpp_ipsec_t *this)
 {
-    return chunk_hash_inc(chunk_from_thing(sa->spi),
-                          chunk_hash(sa->dst->get_address(sa->dst)));
+    void *key;
+    tunnel_t *val;
+    enumerator_t *enumerator;
+
+    this->mutex->lock(this->mutex);
+    enumerator = this->tunnels->create_enumerator(this->tunnels);
+    while (enumerator->enumerate(enumerator, &key, &val))
+    {
+        dump_tunnel(val);
+    }
+    enumerator->destroy(enumerator);
+    this->mutex->unlock(this->mutex);
+}
+#endif
+
+/**
+ * Hash function for IPsec Tunnel Interface hash table
+ */
+static u_int tunnel_hash(tunnel_t *tunnel)
+{
+    DBG1(DBG_KNL, "kernel_vpp: dst_spi=%u", tunnel->dst_spi);
+    return chunk_hash(chunk_from_thing(tunnel->dst_spi));
+}
+
+/**
+ * Equals function for IPSec Tunnel Interface hash table
+ */
+static bool tunnel_equals(tunnel_t *one, tunnel_t *two)
+{
+    DBG1(DBG_KNL, "kernel_vpp: one->dst_addr=%s, two->dst_addr=%s, "
+                  "one->dst_spi=%u, two->dst_spi=%u",
+                  one->dst_addr, two->dst_addr,
+                  one->dst_spi, two->dst_spi);
+    return one->dst_spi == two->dst_spi &&
+           one->dst_addr && two->dst_addr &&
+           (strcmp(one->dst_addr, two->dst_addr) == 0);
 }
 
 /* ENCR_3DES (4) NOT supported in proto definition */
@@ -306,7 +365,7 @@ static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
     tunnel_t *tunnel;
     host_t *dst_net;
     uint8_t pfx_len;
-    status_t rc;
+    status_t rc = SUCCESS;
     
 
     if ((data->type != POLICY_IPSEC) || !data->sa ||
@@ -316,32 +375,36 @@ static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
         return NOT_SUPPORTED;
     }
 
-    // we ignore POLICY_OUT
+    // we ignore POLICY_IN
     if (id->dir != POLICY_OUT)
     {
         return SUCCESS;
     }
 
-    kernel_ipsec_sa_id_t sa_id = {
-            .dst = data->dst,
-            .spi = data->sa->esp.spi
+    tunnel_t _tun = {
+            .dst_spi = data->sa->esp.spi,
+            .dst_addr = chunk_to_ipv4(data->dst->get_address(data->dst))
     };
 
     if (op == ROUTE_ADD)
     {
         this->mutex->lock(this->mutex);
-        tunnel = this->tunnels->get(this->tunnels, &sa_id);
+        tunnel = this->tunnels->get(this->tunnels, &_tun);
         this->mutex->unlock(this->mutex);
     }
     else {
         this->mutex->lock(this->mutex);
-        tunnel = this->tunnels->remove(this->tunnels, &sa_id);
+        tunnel = this->tunnels->remove(this->tunnels, &_tun);
         this->mutex->unlock(this->mutex);
     }
 
+    free(_tun.dst_addr);
+
     if (!tunnel)
     {
-        DBG1(DBG_KNL, "tunnel not found can't add routes");
+        DBG1(DBG_KNL, "kernel_vpp: error %s routes, "
+                      "tunnel not found", op == ROUTE_ADD ?
+                      "adding" : "removing");
         return FAILED;
     }
 
@@ -351,9 +414,9 @@ static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
 
     if (op == ROUTE_ADD)
     {
-        rc = charon->kernel->add_route(charon->kernel, dst_net->get_address(
+        /*rc = charon->kernel->add_route(charon->kernel, dst_net->get_address(
                                        dst_net), pfx_len, data->dst, NULL,
-                                       tunnel->if_name);
+                                       tunnel->if_name);*/
     }
     else
     {
@@ -375,38 +438,6 @@ static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
 
     return rc;
 }
-
-/**
- * Convert chunk to ipv4 address
- */
-char *chunk_to_ipv4(chunk_t address)
-{
-    struct in_addr addr;
-    char *ipv4;
-
-    if (address.len != IPV4_SZ)
-    {
-        DBG2(DBG_KNL, "ip address unsupported size");
-        return NULL;
-    }
-
-    ipv4 = calloc(INET_ADDRSTRLEN, sizeof(char));
-    if (ipv4 == NULL)
-    {
-        return NULL;
-    }
-
-    memcpy(&(addr.s_addr), address.ptr, IPV4_SZ); 
-    if (inet_ntop(AF_INET, &addr, ipv4, INET_ADDRSTRLEN * sizeof(char)) == NULL)
-    {
-        free(ipv4);
-        DBG2(DBG_KNL, "inet_ntop error: %s", strerror(errno));
-        return NULL;
-    }
-    DBG1(DBG_KNL, "convert: ipv4 addr %s", ipv4);
-    return ipv4;
-}
-
 
 #if 0
 /**
@@ -484,10 +515,9 @@ static status_t create_tunnel(tunnel_t *tp)
     rc = vac->put(vac, &req, &rsp); 
     if (rc == FAILED)
     {
-        DBG1(DBG_KNL, "error running put rpc request");
+        DBG1(DBG_KNL, "kernel_vpp: error communicating with grpc");
         return FAILED;
     }
-    sleep(3);
 
     return SUCCESS;
 }
@@ -533,7 +563,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 
         if (!charon->kernel->get_interface(charon->kernel, id->dst, &un_if_name))
         {
-            DBG1(DBG_KNL, "kernel_vpp: unable to get interface");
+            DBG1(DBG_KNL, "kernel_vpp: unable to get interface %H", id->dst);
             return FAILED;
         }
 
@@ -550,7 +580,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
                .if_name = if_name,
                .un_if_name = un_if_name,
                .src_spi = id->spi,
-               .src_addr = chunk_to_ipv4(id->src->get_address(id->dst)),
+               .src_addr = chunk_to_ipv4(id->dst->get_address(id->dst)),
                .dst_addr = chunk_to_ipv4(id->src->get_address(id->src)),
                .enc_alg = vpp_enc_alg,
                .int_alg = vpp_int_alg,
@@ -573,7 +603,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 
         if (!tunnel)
         {
-            DBG1(DBG_KNL, "kernel_vpp: error adding tunnel,"
+            DBG1(DBG_KNL, "kernel_vpp: error adding tunnel, "
                           "missing inbound SA");
             return NOT_FOUND;
         }
@@ -582,7 +612,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
         int_key = chunk_to_hex(data->int_key, NULL, 0);
 
         tunnel->dst_enc_key = enc_key.ptr;
-        tunnel->src_enc_key = int_key.ptr;
+        tunnel->dst_int_key = int_key.ptr;
 
         tunnel->dst_spi = id->spi;
 
@@ -593,18 +623,12 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
             return FAILED;
         }
 
-        DBG1(DBG_KNL, "kernel_vpp: success creating tunnel,"
+        DBG1(DBG_KNL, "kernel_vpp: success creating tunnel, "
                       "received outbound SA");
         dump_tunnel(tunnel);
 
-        // hash based on outbound (remote/destination)
-        kernel_ipsec_sa_id_t sa_id = {
-                .dst = id->dst,
-                .spi = id->spi
-        };
-
         this->mutex->lock(this->mutex);
-        this->tunnels->put(this->tunnels, &sa_id, tunnel);
+        this->tunnels->put(this->tunnels, tunnel, tunnel);
         this->mutex->unlock(this->mutex);
     }
     return SUCCESS;
@@ -816,8 +840,8 @@ kernel_vpp_ipsec_t *kernel_vpp_ipsec_create()
         },
         .mutex = mutex_create(MUTEX_TYPE_DEFAULT),
         .cache = hashtable_create(hashtable_hash_ptr, hashtable_equals_ptr, 4),
-        .tunnels = hashtable_create((hashtable_hash_t)tunnel_hash,
-                                    hashtable_equals_ptr, 32),
+        .tunnels = hashtable_create((void *)tunnel_hash,
+                                    (void *)tunnel_equals, 1),
         .manage_routes = lib->settings->get_bool(lib->settings,
                             "%s.install_routes", TRUE, lib->ns),
     );

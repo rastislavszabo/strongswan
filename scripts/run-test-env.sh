@@ -165,13 +165,13 @@ grpc_conf
 vpp_conf
 
 # responder aka vpn server (gateway)
-sudo docker run --name responder -d --rm --net=host --privileged -it -e INITIAL_LOGLVL=debug -e ETCD_CONFIG=DISABLED -e KAFKA_CONFIG=DISABLED -v $VPP_CFG_DIR:/etc/vpp -v $AGENT_CFG_DIR:/opt/vpp-agent/dev ligato/vpp-agent:pantheon-dev
+sudo docker run --name responder -d --net=host --privileged -it -e INITIAL_LOGLVL=debug -e ETCD_CONFIG=DISABLED -e KAFKA_CONFIG=DISABLED -v $VPP_CFG_DIR:/etc/vpp -v $AGENT_CFG_DIR:/opt/vpp-agent/dev ligato/vpp-agent:pantheon-dev
 
 # initiator aka vpn client
 #sudo docker run --name responder -d --rm --privileged -v $INITIATOR_CFG_DIR:/conf -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan
 
 # initiator aka vpn client
-sudo docker run --name initiator -d --rm --privileged -v $INITIATOR_CFG_DIR:/conf -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan
+sudo docker run --name initiator -d --privileged -v $INITIATOR_CFG_DIR:/conf -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan
 
 # dummy network behind vpn
 sleep 2
@@ -185,5 +185,8 @@ sudo docker exec initiator ip link set wan1 up
 grpc_demo_setup
 
 sudo ipsec start
+
+sleep 4
+sudo docker exec initiator ipsec up initiator
 
 fi

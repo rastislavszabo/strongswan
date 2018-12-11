@@ -15,7 +15,9 @@
 # limitations under the License.
 
 sudo docker stop initiator &> /dev/null
+sudo docker container rm initiator &> /dev/null
+
 sudo docker stop responder &> /dev/null
-sudo docker stop kafka &> /dev/null
-sudo docker stop etcd &> /dev/null
+sudo docker container rm responder &> /dev/null
+
 sudo ipsec stop
