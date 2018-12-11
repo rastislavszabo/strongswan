@@ -204,7 +204,7 @@ static void free_tunnel(tunnel_t *tunnel)
 }
 
 /**
- * Used to test input from strongswan
+ * Prints out tunnel, used for debug purposes
  */
 static void dump_tunnel(tunnel_t *tp)
 {
@@ -225,30 +225,11 @@ static void dump_tunnel(tunnel_t *tp)
                   tp->dst_int_key ? tp->dst_int_key : q);
 }
 
-#if 0
-static void dump_tunnels(private_kernel_vpp_ipsec_t *this)
-{
-    void *key;
-    tunnel_t *val;
-    enumerator_t *enumerator;
-
-    this->mutex->lock(this->mutex);
-    enumerator = this->tunnels->create_enumerator(this->tunnels);
-    while (enumerator->enumerate(enumerator, &key, &val))
-    {
-        dump_tunnel(val);
-    }
-    enumerator->destroy(enumerator);
-    this->mutex->unlock(this->mutex);
-}
-#endif
-
 /**
  * Hash function for IPsec Tunnel Interface hash table
  */
 static u_int tunnel_hash(tunnel_t *tunnel)
 {
-    DBG1(DBG_KNL, "kernel_vpp: dst_spi=%u", tunnel->dst_spi);
     return chunk_hash(chunk_from_thing(tunnel->dst_spi));
 }
 
@@ -257,15 +238,14 @@ static u_int tunnel_hash(tunnel_t *tunnel)
  */
 static bool tunnel_equals(tunnel_t *one, tunnel_t *two)
 {
-    DBG1(DBG_KNL, "kernel_vpp: one->dst_addr=%s, two->dst_addr=%s, "
-                  "one->dst_spi=%u, two->dst_spi=%u",
-                  one->dst_addr, two->dst_addr,
-                  one->dst_spi, two->dst_spi);
     return one->dst_spi == two->dst_spi &&
            one->dst_addr && two->dst_addr &&
            (strcmp(one->dst_addr, two->dst_addr) == 0);
 }
 
+/**
+ * Converts strongswan encryption algorithm numbering to vpp numbering
+ */
 /* ENCR_3DES (4) NOT supported in proto definition */
 static status_t convert_enc_alg(uint16_t alg, chunk_t key, uint16_t *vpp_alg)
 {
@@ -297,6 +277,9 @@ static status_t convert_enc_alg(uint16_t alg, chunk_t key, uint16_t *vpp_alg)
     return SUCCESS;
 }
 
+/**
+ * Converts strongswan integrity algorithm numbering to vpp numbering
+ */
 static status_t convert_int_alg(uint16_t alg, uint16_t *vpp_alg)
 {
     switch (alg)
@@ -326,7 +309,7 @@ static status_t convert_int_alg(uint16_t alg, uint16_t *vpp_alg)
 }
 
 /**
- * Delete tunnel interface
+ * Delete tunnel interface over grpc
  */
 static status_t delete_tunnel(tunnel_t *tp)
 {
@@ -376,6 +359,7 @@ static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
     }
 
     // we ignore POLICY_IN
+    // because we use this call ony for setting up routes
     if (id->dir != POLICY_OUT)
     {
         return SUCCESS;
@@ -414,9 +398,9 @@ static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
 
     if (op == ROUTE_ADD)
     {
-        /*rc = charon->kernel->add_route(charon->kernel, dst_net->get_address(
+        rc = charon->kernel->add_route(charon->kernel, dst_net->get_address(
                                        dst_net), pfx_len, data->dst, NULL,
-                                       tunnel->if_name);*/
+                                       tunnel->if_name);
     }
     else
     {
@@ -428,10 +412,14 @@ static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
             DBG1(DBG_KNL, "kernel_vpp: error deleting tunnel");
             rc = FAILED;
         }
+        else
+        {
+            DBG1(DBG_KNL, "kernel_vpp: success deleting tunnel");
+        }
         free_tunnel(tunnel);
     }
 
-    DBG1(DBG_KNL, "(%s) %s route %H/%d via tunnel interface %s",
+    DBG1(DBG_KNL, "kernel_vpp: (%s) %s route %H/%d via tunnel interface %s",
          rc == SUCCESS ? "success" : "failure",
          op == ROUTE_ADD ? "add" : "del",
          dst_net, pfx_len, tunnel->if_name);
@@ -439,40 +427,8 @@ static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
     return rc;
 }
 
-#if 0
 /**
- * Set unnumbered interface
- */
-static status_t set_tunnel_address(tunnel_t *tp)
-{
-    Ipsec__TunnelInterfaces__Tunnel tunnel = IPSEC__TUNNEL_INTERFACES__TUNNEL__INIT;
-    Ipsec__TunnelInterfaces__Tunnel *tunnels[1];
-
-    Rpc__DataRequest req = RPC__DATA_REQUEST__INIT;
-    Rpc__PutResponse *rsp = NULL;
-
-    req.tunnels = tunnels;
-    req.tunnels[0] = &tunnel;
-    req.n_tunnels = 1;
-
-    status_t rc;
-
-    tunnel.name = tp->if_name;
-    tunnel.unnumbered_name = tp->un_if_name;
-
-    rc = vac->put(vac, &req, &rsp); 
-    if (rc == FAILED)
-    {
-        DBG1(DBG_KNL, "error running put rpc request");
-        return FAILED;
-    }
-
-    return SUCCESS;
-}
-#endif
-
-/**
- * Create tunnel interface
+ * Create tunnel interface over grpc
  */
 static status_t create_tunnel(tunnel_t *tp)
 {
@@ -570,11 +526,12 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
         enc_key = chunk_to_hex(data->enc_key, NULL, 0);
         int_key = chunk_to_hex(data->int_key, NULL, 0);
 
-        this->mutex->lock(this->mutex);
-
         len = strlen(IF_NAME_PREFIX) + MAX_UINT32_LEN + 1;
         if_name = malloc(sizeof(char) * len);
+
+        this->mutex->lock(this->mutex);
         snprintf(if_name, len, "%s%d", IF_NAME_PREFIX, this->next_index++);
+        this->mutex->unlock(this->mutex);
 
         INIT(tunnel,
                .if_name = if_name,
@@ -588,6 +545,15 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
                .src_int_key = int_key.ptr
             );
 
+        if (!tunnel->src_addr || !tunnel->dst_addr)
+        {
+            free_tunnel(tunnel);
+            DBG1(DBG_KNL, "kernel_vpp: error converting chunk to ipv4 %s"
+                          " address", !tunnel->src_addr ? "src" : "dst");
+            return FAILED;
+        }
+
+        this->mutex->lock(this->mutex);
         this->cache->put(this->cache, (void *)(uintptr_t)data->reqid, tunnel);
         this->mutex->unlock(this->mutex);
 

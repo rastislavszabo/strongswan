@@ -205,8 +205,22 @@ stop() {
   sudo ipsec stop &> /dev/null
 }
 
+enter_initiator() {
+  sudo docker exec -it initiator /bin/bash
+}
+
+enter_responder() {
+  sudo docker exec -it responder vppctl -s 0:5002
+}
+
 
 case "$1" in
+  initiator)
+        enter_initiator
+        ;;
+  responder)
+        enter_responder
+        ;;
   start)
         start
         ;;
