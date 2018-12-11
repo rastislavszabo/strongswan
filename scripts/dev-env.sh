@@ -92,7 +92,7 @@ conn responder
   leftsubnet=10.10.10.0/24
 
 # remote: (roadwarrior)
-#  right=172.16.0.1
+  rightsourceip=10.10.20.0/24
   rightauth=psk
 
 EOF"
@@ -117,7 +117,7 @@ conn initiator
   esp=aes192-sha1-esn!
 
 # local:
-#  left=172.16.0.1
+  leftsourceip=%config
   leftauth=psk
 
 # remote: (gateway)
