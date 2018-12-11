@@ -141,6 +141,7 @@ static status_t manage_route(private_kernel_vpp_net_t *this, bool add,
     Rpc__PutResponse *put_rsp = NULL;
     Rpc__DelResponse *del_rsp = NULL;
     L3__StaticRoutes__Route route = L3__STATIC_ROUTES__ROUTE__INIT;
+    L3__StaticRoutes__Route *routes;
 
     if (dst.len == 4)
     {
@@ -183,7 +184,7 @@ static status_t manage_route(private_kernel_vpp_net_t *this, bool add,
     }
 
     rq.n_staticroutes = 1;
-    rq.staticroutes = calloc(1, sizeof(L3__StaticRoutes__Route *));
+    rq.staticroutes = &routes;
     rq.staticroutes[0] = &route;
     if (add)
     {
@@ -193,7 +194,6 @@ static status_t manage_route(private_kernel_vpp_net_t *this, bool add,
     {
         rc = vac->del(vac, &rq, &del_rsp);
     }
-    free(rq.staticroutes);
 
     if (put_rsp)
         rpc__put_response__free_unpacked(put_rsp, 0);
@@ -271,7 +271,7 @@ static status_t find_ip_route(fib_path_t *path, int prefix, host_t *dest)
         if (!net)
         {
             DBG1(DBG_KNL, "failed to convert subnet: %s!", route->dst_ip_addr);
-            return status;
+            return FAILED;
         }
         if (net->get_family(net) != dest->get_family(dest))
         {
