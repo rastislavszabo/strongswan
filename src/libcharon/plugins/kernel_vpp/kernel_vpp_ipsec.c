@@ -462,7 +462,7 @@ static status_t create_tunnel(tunnel_t *tp)
     tunnel.local_ip = tp->src_addr;
     tunnel.local_spi = tp->src_spi;
     tunnel.local_integ_key = tp->src_int_key;
-    tunnel.local_crypto_key = tp->dst_enc_key;
+    tunnel.local_crypto_key = tp->src_enc_key;
 
     tunnel.remote_ip = tp->dst_addr;
     tunnel.remote_spi = tp->dst_spi;
@@ -748,6 +748,7 @@ METHOD(kernel_ipsec_t, update_sa, status_t,
     private_kernel_vpp_ipsec_t *this, kernel_ipsec_sa_id_t *id,
     kernel_ipsec_update_sa_t *data)
 {
+    DBG1(DBG_KNL, "kernel_vpp: update sa requested");
     return NOT_SUPPORTED;
 }
 
