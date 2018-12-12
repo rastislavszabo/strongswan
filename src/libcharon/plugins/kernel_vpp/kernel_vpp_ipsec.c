@@ -334,6 +334,7 @@ static status_t delete_tunnel(tunnel_t *tp)
         return FAILED;
     }
 
+    rpc__del_response__free_unpacked(rsp, 0);
     return SUCCESS;
 }
 
@@ -475,6 +476,7 @@ static status_t create_tunnel(tunnel_t *tp)
         return FAILED;
     }
 
+    rpc__put_response__free_unpacked(rsp, 0);
     return SUCCESS;
 }
 
