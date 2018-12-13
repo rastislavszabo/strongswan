@@ -367,7 +367,7 @@ static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
     }
 
     tunnel_t _tun = {
-            .dst_spi = data->sa->esp.spi,
+            .dst_spi = ntohl(data->sa->esp.spi),
             .dst_addr = chunk_to_ipv4(data->dst->get_address(data->dst))
     };
 
@@ -538,7 +538,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
         INIT(tunnel,
                .if_name = if_name,
                .un_if_name = un_if_name,
-               .src_spi = id->spi,
+               .src_spi = ntohl(id->spi),
                .src_addr = chunk_to_ipv4(id->dst->get_address(id->dst)),
                .dst_addr = chunk_to_ipv4(id->src->get_address(id->src)),
                .enc_alg = vpp_enc_alg,
@@ -582,7 +582,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
         tunnel->dst_enc_key = enc_key.ptr;
         tunnel->dst_int_key = int_key.ptr;
 
-        tunnel->dst_spi = id->spi;
+        tunnel->dst_spi = ntohl(id->spi);
 
         if (create_tunnel(tunnel) == FAILED)
         {
