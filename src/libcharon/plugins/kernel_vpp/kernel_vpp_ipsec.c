@@ -230,7 +230,7 @@ static void dump_tunnel(tunnel_t *tp)
  */
 static u_int tunnel_hash(tunnel_t *tunnel)
 {
-    return chunk_hash(chunk_from_thing(tunnel->dst_spi));
+    return chunk_hash(chunk_from_thing(tunnel->src_spi));
 }
 
 /**
@@ -238,7 +238,7 @@ static u_int tunnel_hash(tunnel_t *tunnel)
  */
 static bool tunnel_equals(tunnel_t *one, tunnel_t *two)
 {
-    return one->dst_spi == two->dst_spi &&
+    return one->src_spi == two->src_spi &&
            one->dst_addr && two->dst_addr &&
            (strcmp(one->dst_addr, two->dst_addr) == 0);
 }
@@ -367,7 +367,7 @@ static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
     }
 
     tunnel_t _tun = {
-            .dst_spi = ntohl(data->sa->esp.spi),
+            .src_spi = ntohl(data->sa->esp.spi),
             .dst_addr = chunk_to_ipv4(data->dst->get_address(data->dst))
     };
 
@@ -538,13 +538,13 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
         INIT(tunnel,
                .if_name = if_name,
                .un_if_name = un_if_name,
-               .src_spi = ntohl(id->spi),
+               .dst_spi = ntohl(id->spi),
                .src_addr = chunk_to_ipv4(id->dst->get_address(id->dst)),
                .dst_addr = chunk_to_ipv4(id->src->get_address(id->src)),
                .enc_alg = vpp_enc_alg,
                .int_alg = vpp_int_alg,
-               .src_enc_key = enc_key.ptr,
-               .src_int_key = int_key.ptr
+               .dst_enc_key = enc_key.ptr,
+               .dst_int_key = int_key.ptr
             );
 
         if (!tunnel->src_addr || !tunnel->dst_addr)
@@ -579,10 +579,10 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
         enc_key = chunk_to_hex(data->enc_key, NULL, 0);
         int_key = chunk_to_hex(data->int_key, NULL, 0);
 
-        tunnel->dst_enc_key = enc_key.ptr;
-        tunnel->dst_int_key = int_key.ptr;
+        tunnel->src_enc_key = enc_key.ptr;
+        tunnel->src_int_key = int_key.ptr;
 
-        tunnel->dst_spi = ntohl(id->spi);
+        tunnel->src_spi = ntohl(id->spi);
 
         if (create_tunnel(tunnel) == FAILED)
         {

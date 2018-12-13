@@ -90,9 +90,10 @@ conn responder
   leftauth=psk
 
   leftsubnet=10.10.10.0/24
+  rightsubnet=10.10.20.0/24
 
 # remote: (roadwarrior)
-  rightsourceip=10.10.20.0/24
+#  rightsourceip=10.10.20.0/24
   rightauth=psk
 
 EOF"
@@ -117,13 +118,14 @@ conn initiator
   esp=aes192-sha1-esn!
 
 # local:
-  leftsourceip=%config
+#  leftsourceip=%config
   leftauth=psk
 
 # remote: (gateway)
   right=172.16.0.2
   rightauth=psk
 
+  leftsubnet=10.10.20.0/24
   rightsubnet=10.10.10.0/24
 
 EOF"
@@ -221,6 +223,10 @@ case "$1" in
   responder)
         enter_responder
         ;;
+  restart)
+        stop
+        start
+        ;;
   start)
         start
         ;;
@@ -228,7 +234,7 @@ case "$1" in
         stop
         ;;
   *)
-        echo $"Usage: $0 {start|stop}"
+        echo $"Usage: $0 {start|stop|restart|initiator|responder}"
         exit 1
 esac
 
