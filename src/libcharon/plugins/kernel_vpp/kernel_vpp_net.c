@@ -542,6 +542,11 @@ static void update_interfaces(private_kernel_vpp_net_t *this,
     {
         iface = rp->interfaces[i];
 
+        if (!iface->name)
+        {
+            continue;
+        }
+
         exists = FALSE;
         while (enumerator->enumerate(enumerator, &entry))
         {
@@ -556,11 +561,12 @@ static void update_interfaces(private_kernel_vpp_net_t *this,
         {
             INIT(entry,
                     .up = iface->enabled ? TRUE : FALSE,
-                    .addrs = linked_list_create(),
+                    .addrs = linked_list_create()
             );
+
             strncpy(entry->if_name, iface->name, sizeof(entry->if_name));
             DBG2(DBG_KNL, "IF %s %s", entry->if_name,
-                    entry->up ? "UP" : "DOWN");
+                 entry->up ? "UP" : "DOWN");
             this->ifaces->insert_last(this->ifaces, entry);
         }
         update_addrs(this, entry, iface);
@@ -585,6 +591,11 @@ static void process_iface_event(private_kernel_vpp_net_t *this,
     enumerator = this->ifaces->create_enumerator(this->ifaces);
     while (enumerator->enumerate(enumerator, &entry))
     {
+        if (!iface->name)
+        {
+            continue;
+        }
+
         if (!strncmp(entry->if_name, iface->name, sizeof(entry->if_name)))
         {
             int is_up = iface->admin_status == EV_STATUS_UP ? TRUE : FALSE;
@@ -643,7 +654,7 @@ static status_t register_for_iface_events(private_kernel_vpp_net_t *this)
 static void *net_update_thread_fn(private_kernel_vpp_net_t *this)
 {
     status_t rv;
-    Rpc__InterfaceResponse *rp;
+    Rpc__InterfaceResponse *rp = NULL;
     enumerator_t *enumerator;
 
     while (1)

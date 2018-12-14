@@ -25,7 +25,7 @@
 #include <kernel_vpp_grpc.h>
 #include <ip_packet.h>
 
-#define READ_PATH "/tmp/strongswan-uds-socket"
+#define READ_PATH "/etc/vpp/strongswan-uds-socket"
 
 typedef struct private_socket_vpp_socket_t private_socket_vpp_socket_t;
 typedef struct vpp_packetdesc_t vpp_packetdesc_t;
@@ -426,6 +426,8 @@ socket_vpp_socket_t *socket_vpp_socket_create()
         return NULL;
     }
 
+    DBG2(DBG_LIB, "socket: read_path: %s", read_path);
+
     status_t status = register_punt_socket(this->vac, this->port, read_path);
     if (SUCCESS != status)
         return NULL;
@@ -434,12 +436,16 @@ socket_vpp_socket_t *socket_vpp_socket_create()
     if (SUCCESS != status)
         return NULL;
 
+    DBG2(DBG_LIB, "socket: write_path: %s", write_path);
+
     status = create_and_bind_socket(this, write_path, read_path);
     if (SUCCESS != status)
     {
         free(write_path);
         return NULL;
     }
+
+    DBG2(DBG_LIB, "socket: all done and ok !!");
 
     free(write_path);
     return &this->public;
