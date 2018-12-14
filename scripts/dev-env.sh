@@ -14,17 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#VPP_CFG_DIR="/tmp/vpp"
 VPP_CFG_DIR="/etc/vpp"
 AGENT_CFG_DIR="/tmp/vpp-agent"
 
 RESPONDER_CFG_DIR="/etc"
 INITIATOR_CFG_DIR="/tmp/initiator"
-#INITIATOR_CFG_DIR2=
-
-# switch over roles
-#INITIATOR_CFG_DIR="/etc"
-#RESPONDER_CFG_DIR="/tmp/initiator"
 
 vpp_conf() {
   sudo mkdir -p $VPP_CFG_DIR
@@ -83,7 +77,7 @@ conn responder
   type=tunnel
   keyexchange=ikev2
   ike=aes256-sha1-modp2048
-  esp=aes192-sha1-esn!
+  esp=aes192-sha1
 
 # local:
   left=172.16.0.2
@@ -93,7 +87,6 @@ conn responder
   rightsubnet=10.10.20.0/24
 
 # remote: (roadwarrior)
-#  rightsourceip=10.10.20.0/24
   rightauth=psk
 
 EOF"
@@ -115,10 +108,9 @@ conn initiator
   type=tunnel
   keyexchange=ikev2
   ike=aes256-sha1-modp2048
-  esp=aes192-sha1-esn!
+  esp=aes192-sha1
 
 # local:
-#  leftsourceip=%config
   leftauth=psk
 
 # remote: (gateway)
@@ -157,23 +149,13 @@ EOF"
 }
 
 start() {
-  echo "info: building strongswan"
-  make &> /dev/null
-  if [ $? -ne 0 ]; then
-    echo "error: building strongswan"
-    exit 1
-  fi
-
-  echo "info: installing strongswan"
-  sudo make install &> /dev/null
-
   responder_conf
   initiator_conf
   grpc_conf
   vpp_conf
 
   echo "info: starting docker containers"
-  (sudo docker run --name responder -d --net=host --privileged -it -e INITIAL_LOGLVL=debug -e ETCD_CONFIG=DISABLED -e KAFKA_CONFIG=DISABLED -v $VPP_CFG_DIR:/etc/vpp -v $AGENT_CFG_DIR:/opt/vpp-agent/dev ligato/vpp-agent:pantheon-dev && sudo docker run --name initiator -d --privileged -v $INITIATOR_CFG_DIR:/conf -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan) &> /dev/null
+  (sudo docker run --name responder --hostname responder -d --net=host --privileged -it -e INITIAL_LOGLVL=debug -e ETCD_CONFIG=DISABLED -e KAFKA_CONFIG=DISABLED -v $VPP_CFG_DIR:/etc/vpp -v $AGENT_CFG_DIR:/opt/vpp-agent/dev ligato/vpp-agent:pantheon-dev && sudo docker run --name initiator --hostname initiator -d --privileged -v $INITIATOR_CFG_DIR:/conf -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan) &> /dev/null
   if [ $? -ne 0 ]; then
     echo "error: starting docker containers"
     exit 1
@@ -214,7 +196,6 @@ enter_initiator() {
 enter_responder() {
   sudo docker exec -it responder vppctl -s 0:5002
 }
-
 
 case "$1" in
   initiator)

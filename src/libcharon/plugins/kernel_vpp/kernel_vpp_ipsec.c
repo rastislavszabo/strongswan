@@ -150,6 +150,11 @@ typedef struct {
      */
     char *dst_int_key;
 
+    /**
+     * Use Extended Sequence Numbers
+     */
+    bool esn;
+
 } tunnel_t;
 
 /**
@@ -212,7 +217,8 @@ static void dump_tunnel(tunnel_t *tp)
     DBG1(DBG_KNL, "if_name: %s, un_if_name: %s, src_spi: %u, dst_spi: %u, " \
                   "src_addr: %s, dst_addr: %s, enc_alg: %d, int_alg: %d, " \
                   "src_enc_key: %s, dst_enc_key: %s, " \
-                  "src_int_key: %s, dst_int_key: %s",
+                  "src_int_key: %s, dst_int_key: %s, " \
+                  "esn: %d",
                   tp->if_name ? tp->if_name : q, 
                   tp->un_if_name ? tp->un_if_name : q,
                   tp->src_spi, tp->dst_spi,
@@ -222,7 +228,8 @@ static void dump_tunnel(tunnel_t *tp)
                   tp->src_enc_key ? tp->src_enc_key : q,
                   tp->dst_enc_key ? tp->dst_enc_key : q,
                   tp->src_int_key ? tp->src_int_key : q,
-                  tp->dst_int_key ? tp->dst_int_key : q);
+                  tp->dst_int_key ? tp->dst_int_key : q,
+                  tp->esn);
 }
 
 /**
@@ -363,6 +370,8 @@ static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
     // because we use this call ony for setting up routes
     if (id->dir != POLICY_OUT)
     {
+        DBG1(DBG_KNL, "kernel_vpp: ingoring POLICY_IN, routes set in "
+                     "POLICY_OUT");
         return SUCCESS;
     }
 
@@ -445,12 +454,14 @@ static status_t create_tunnel(tunnel_t *tp)
 
     status_t rc;
 
+    tunnel.has_esn = TRUE;
     tunnel.has_enabled = TRUE;
     tunnel.has_local_spi = TRUE;
     tunnel.has_remote_spi = TRUE;
     tunnel.has_integ_alg = TRUE;
     tunnel.has_crypto_alg = TRUE;
 
+    tunnel.esn = tp->esn;
     tunnel.name = tp->if_name;
 
     tunnel.enabled = TRUE;
@@ -536,6 +547,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
         this->mutex->unlock(this->mutex);
 
         INIT(tunnel,
+               .esn = data->esn,
                .if_name = if_name,
                .un_if_name = un_if_name,
                .dst_spi = ntohl(id->spi),
