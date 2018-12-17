@@ -189,6 +189,8 @@ start() {
     exit 1
   fi
 
+
+  sudo mkdir -p /etc/ipsec.d/run
   echo "info: starting ipsec"
   sudo ipsec start &> /dev/null
 
