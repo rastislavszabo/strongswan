@@ -24,8 +24,8 @@ git submodule update --init 1> $LOG
 
 echo "Building dependency: grpc-c"
 cd ${WS}/third_party/grpc-c 1>> $LOG
-git submodule update --init
-autoreconf --install
+git submodule update --init 1>> $LOG
+autoreconf --install 1>> $LOG
 
 echo "Building gRPC"
 cd third_party/grpc
