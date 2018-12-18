@@ -90,6 +90,24 @@ conn responder
   rightauth=psk
 
 EOF"
+  sudo bash -c "cat << EOF > $RESPONDER_CFG_DIR/strongswan.conf
+charon {
+  load_modular = yes
+    plugins {
+      include strongswan.d/charon/*.conf
+    }
+  filelog {
+    charon {
+      path = /tmp/charon.log
+      time_format = %b %e %T
+      ike_name = yes
+      append = no
+      default = 4
+      flush_line = yes
+    }
+  }
+}
+EOF"
   sudo bash -c "cat << EOF > $RESPONDER_CFG_DIR/ipsec.secrets
 : PSK 'Vpp123'
 EOF"
@@ -155,7 +173,7 @@ start() {
   vpp_conf
 
   echo "info: starting docker containers"
-  (sudo docker run --name responder --hostname responder -d --net=host --privileged -it -e INITIAL_LOGLVL=debug -e ETCD_CONFIG=DISABLED -e KAFKA_CONFIG=DISABLED -v $VPP_CFG_DIR:/etc/vpp -v $AGENT_CFG_DIR:/opt/vpp-agent/dev ligato/vpp-agent:pantheon-dev && sudo docker run --name initiator --hostname initiator -d --privileged -v $INITIATOR_CFG_DIR:/conf -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan) &> /dev/null
+  (sudo docker run --name responder --hostname responder -d --net=host --privileged -it -e INITIAL_LOGLVL=debug -e ETCD_CONFIG=DISABLED -e KAFKA_CONFIG=DISABLED -v $VPP_CFG_DIR:/etc/vpp -v $AGENT_CFG_DIR:/opt/vpp-agent/dev ligato/vpp-agent:pantheon-dev && sudo docker run --name initiator --hostname initiator -d --privileged -v $INITIATOR_CFG_DIR:/conf -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan) 1> /dev/null
   if [ $? -ne 0 ]; then
     echo "error: starting docker containers"
     exit 1
@@ -171,6 +189,8 @@ start() {
     exit 1
   fi
 
+
+  sudo mkdir -p /etc/ipsec.d/run
   echo "info: starting ipsec"
   sudo ipsec start &> /dev/null
 
