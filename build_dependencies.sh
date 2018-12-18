@@ -18,43 +18,43 @@
 set -e
 
 WS="`pwd`"
+LOG="/tmp/build.log"
+
+git submodule update --init 1> $LOG
 
 echo "Building dependency: grpc-c"
-cd ${WS}/third_party/grpc-c
+cd ${WS}/third_party/grpc-c 1>> $LOG
 git submodule update --init
 autoreconf --install
 
 echo "Building gRPC"
 cd third_party/grpc
-git submodule update --init
-CFLAGS="-Wno-implicit-fallthrough -Wno-stringop-overflow -Wno-error=conversion" make && sudo make install
+git submodule update --init 1>> $LOG
+(CFLAGS="-Wno-implicit-fallthrough -Wno-stringop-overflow -Wno-error=conversion" make && sudo make install) 1>> $LOG
 cd ../../
 
-echo "Installing Protobuf"
+echo "Building Protobuf"
 cd third_party/protobuf
-./autogen.sh && ./configure && make && sudo make install
+(./autogen.sh && ./configure && make && sudo make install) 1>> $LOG
 sudo ldconfig
 cd ../../
 
 echo "Building protobuf-c"
 cd third_party/protobuf-c
-./autogen.sh && ./configure && make && sudo make install
+(./autogen.sh && ./configure && make && sudo make install) 1>> $LOG
 cd ../../
+
 mkdir build -p; cd build
-../configure
-make
-sudo make install
+(../configure && make && sudo make install) 1>> $LOG
 
 echo "Generating app-agent API files"
 cd ${WS}/third_party/vpp-agent
-git submodule update --init
-git checkout pantheon-dev
+git submodule update --init 1>> $LOG
+git checkout pantheon-dev 1>> $LOG
+
 cd ${WS}
 ./gen_api.sh
 
-echo "Building vpp-agent API C lib"
+echo "Building vpp-agent & grpc_demo_setup API C lib"
 cd ${WS}/third_party/vpp_agent_c_api
-./autogen.sh
-./configure
-make
-sudo make install
+(./autogen.sh && ./configure && make && sudo make install) 1>> $LOG
