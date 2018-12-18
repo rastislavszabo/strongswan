@@ -23,8 +23,24 @@ echo "Building dependency: grpc-c"
 cd ${WS}/third_party/grpc-c
 git submodule update --init
 autoreconf --install
-./builddeps.sh
-mkdir build; cd build
+
+echo "Building gRPC"
+cd third_party/grpc
+git submodule update --init
+CFLAGS="-Wno-implicit-fallthrough -Wno-stringop-overflow -Wno-error=conversion" make && sudo make install
+cd ../../
+
+echo "Installing Protobuf"
+cd third_party/protobuf
+./autogen.sh && ./configure && make && sudo make install
+sudo ldconfig
+cd ../../
+
+echo "Building protobuf-c"
+cd third_party/protobuf-c
+./autogen.sh && ./configure && make && sudo make install
+cd ../../
+mkdir build -p; cd build
 ../configure
 make
 sudo make install
