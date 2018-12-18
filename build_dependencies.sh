@@ -20,7 +20,9 @@ set -e
 WS="`pwd`"
 LOG="/tmp/build.log"
 
-git submodule update --init 1> $LOG
+echo "" > $LOG
+
+git submodule update --init 1>> $LOG
 
 echo "Building dependency: grpc-c"
 cd ${WS}/third_party/grpc-c 1>> $LOG
