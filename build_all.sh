@@ -16,8 +16,8 @@
 
 set -e
 
+LOG="/tmp/build.log"
+
 ./build_dependencies.sh
-./autogen.sh
-./configure --enable-socket-vpp --enable-libipsec --enable-kernel-vpp --sysconfdir=/etc --with-piddir=/etc/ipsec.d/run --disable-kernel-netlink --disable-socket-default
-make
-sudo ldconfig
+(./autogen.sh && ./configure --enable-socket-vpp --enable-libipsec --enable-kernel-vpp --sysconfdir=/etc --with-piddir=/etc/ipsec.d/run --disable-kernel-netlink --disable-socket-default && make && sudo make install) 1>> $LOG
+sudo ldconfig 1>> $LOG
