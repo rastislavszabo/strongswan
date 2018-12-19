@@ -187,6 +187,9 @@ char *chunk_to_ipv4(chunk_t address)
     return ipv4;
 }
 
+/**
+ * Free tunnel
+ */
 static void free_tunnel(tunnel_t *tunnel)
 {
     if (tunnel->if_name)
@@ -491,6 +494,14 @@ static status_t create_tunnel(tunnel_t *tp)
     return SUCCESS;
 }
 
+/**
+ * Add an SA to the SAD.
+ *
+ * This function is called with a single SA for a signle protocol
+ * in one direction. To be able to install vpp tunnel we need one
+ * SA for each direction (IN/OUT). Inbound SA comes first so we
+ * cache it and wait for outbound SA before creating tunnel.
+ */
 METHOD(kernel_ipsec_t, add_sa, status_t,
     private_kernel_vpp_ipsec_t *this, kernel_ipsec_sa_id_t *id,
     kernel_ipsec_add_sa_t *data)
@@ -614,6 +625,9 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
     return SUCCESS;
 }
 
+/**
+ * Delete a previously installed SA from the SAD.
+ */
 METHOD(kernel_ipsec_t, del_sa, status_t,
     private_kernel_vpp_ipsec_t *this, kernel_ipsec_sa_id_t *id,
     kernel_ipsec_del_sa_t *data)
@@ -621,6 +635,9 @@ METHOD(kernel_ipsec_t, del_sa, status_t,
     return SUCCESS;
 }
 
+/**
+ * Add a policy to the SPD.
+ */
 METHOD(kernel_ipsec_t, add_policy, status_t,
     private_kernel_vpp_ipsec_t *this, kernel_ipsec_policy_id_t *id,
     kernel_ipsec_manage_policy_t *data)
@@ -632,6 +649,9 @@ METHOD(kernel_ipsec_t, add_policy, status_t,
     return SUCCESS;
 }
 
+/**
+ * Remove a policy from the SPD.
+ */
 METHOD(kernel_ipsec_t, del_policy, status_t,
     private_kernel_vpp_ipsec_t *this, kernel_ipsec_policy_id_t *id,
     kernel_ipsec_manage_policy_t *data)
@@ -643,6 +663,9 @@ METHOD(kernel_ipsec_t, del_policy, status_t,
     return SUCCESS;
 }
 
+/**
+ * Query the number of bytes processed by an SA from the SAD.
+ */
 METHOD(kernel_ipsec_t, query_sa, status_t,
     private_kernel_vpp_ipsec_t *this, kernel_ipsec_sa_id_t *id,
     kernel_ipsec_query_sa_t *data, uint64_t *bytes, uint64_t *packets,
@@ -651,9 +674,35 @@ METHOD(kernel_ipsec_t, query_sa, status_t,
     return NOT_SUPPORTED;
 }
 
+/**
+ * Query the use time of a policy.
+ *
+ * The use time of a policy is the time the policy was used for the last
+ * time. It is not the system time, but a monotonic timestamp as returned
+ * by time_monotonic.
+ */
+METHOD(kernel_ipsec_t, query_policy, status_t,
+    private_kernel_vpp_ipsec_t *this, kernel_ipsec_policy_id_t *id,
+    kernel_ipsec_query_policy_t *data, time_t *use_time)
+{
+    return NOT_SUPPORTED;
+}
+
+/**
+ * Get the feature set supported by this kernel backend.
+ */
 METHOD(kernel_ipsec_t, get_features, kernel_feature_t,
     private_kernel_vpp_ipsec_t *this)
 {
+    // KERNEL_REQUIRE_EXCLUDE_ROUTE
+    //  - networking requires an "exclude" route for IKE/ESP packets
+
+    // KERNEL_REQUIRE_UDP_ENCAPSULATION
+    //  - IPSec implementation requires UDP encapsulation of ESP packets
+
+    // KERNEL_NO_POLICY_UPDATES
+    //  - IPSec backend does not requires a policy reinstall on SA updates
+
     return KERNEL_ESP_V3_TFC;
 }
 
@@ -695,6 +744,9 @@ static bool init_spi(private_kernel_vpp_ipsec_t *this)
     return ok;
 }
 
+/**
+ * Get a SPI from the kernel.
+ */
 METHOD(kernel_ipsec_t, get_spi, status_t,
     private_kernel_vpp_ipsec_t *this, host_t *src, host_t *dst,
     uint8_t protocol, uint32_t *spi)
@@ -705,6 +757,9 @@ METHOD(kernel_ipsec_t, get_spi, status_t,
     return SUCCESS;
 }
 
+/**
+ * Free all cached tunnels
+ */
 static void free_cache(private_kernel_vpp_ipsec_t *this)
 {
     void *key;
@@ -721,6 +776,9 @@ static void free_cache(private_kernel_vpp_ipsec_t *this)
     this->mutex->unlock(this->mutex);
 }
 
+/**
+ * Free all installed tunnels
+ */
 static void free_tunnels(private_kernel_vpp_ipsec_t *this)
 {
     void *key;
@@ -737,6 +795,9 @@ static void free_tunnels(private_kernel_vpp_ipsec_t *this)
     this->mutex->unlock(this->mutex);
 }
 
+/**
+ * Destroy the implementation.
+ */
 METHOD(kernel_ipsec_t, destroy, void,
     private_kernel_vpp_ipsec_t *this)
 {
@@ -749,50 +810,66 @@ METHOD(kernel_ipsec_t, destroy, void,
     free(this);
 }
 
+/**
+ * Get a Compression Parameter Index (CPI) from the kernel.
+ */
 METHOD(kernel_ipsec_t, get_cpi, status_t,
     private_kernel_vpp_ipsec_t *this, host_t *src, host_t *dst,
     uint16_t *cpi)
 {
+    DBG1(DBG_KNL, "kernel_vpp: get CP index not supported");
     return NOT_SUPPORTED;
 }
 
+/**
+ * Update the hosts on an installed tunnel.
+ */
 METHOD(kernel_ipsec_t, update_sa, status_t,
     private_kernel_vpp_ipsec_t *this, kernel_ipsec_sa_id_t *id,
     kernel_ipsec_update_sa_t *data)
 {
-    DBG1(DBG_KNL, "kernel_vpp: update sa requested");
+    DBG1(DBG_KNL, "kernel_vpp: update sa not supported");
     return NOT_SUPPORTED;
 }
 
+/**
+ * Flush all SAs from the SAD.
+ */
 METHOD(kernel_ipsec_t, flush_sas, status_t,
     private_kernel_vpp_ipsec_t *this)
 {
+    DBG1(DBG_KNL, "kernel_vpp: flush sas not supported");
     return NOT_SUPPORTED;
 }
 
-METHOD(kernel_ipsec_t, query_policy, status_t,
-    private_kernel_vpp_ipsec_t *this, kernel_ipsec_policy_id_t *id,
-    kernel_ipsec_query_policy_t *data, time_t *use_time)
-{
-    return NOT_SUPPORTED;
-}
-
+/**
+ * Flush all policies from the SPD.
+ */
 METHOD(kernel_ipsec_t, flush_policies, status_t,
     private_kernel_vpp_ipsec_t *this)
 {
+    DBG1(DBG_KNL, "kernel_vpp: flush policies not supported");
     return NOT_SUPPORTED;
 }
 
+/**
+ * Install a bypass policy for the given socket.
+ */
 METHOD(kernel_ipsec_t, bypass_socket, bool,
     private_kernel_vpp_ipsec_t *this, int fd, int family)
 {
-    return NOT_SUPPORTED;
+    DBG1(DBG_KNL, "kernel_vpp: bypass socket not supported");
+    return FALSE;
 }
 
+/**
+ * Enable decapsulation of ESP-in-UDP packets for the given port/socket.
+ */
 METHOD(kernel_ipsec_t, enable_udp_decap, bool,
     private_kernel_vpp_ipsec_t *this, int fd, int family, u_int16_t port)
 {
-    return NOT_SUPPORTED;
+    DBG1(DBG_KNL, "kernel_vpp: enable udp decap not supported");
+    return FALSE;
 }
 
 kernel_vpp_ipsec_t *kernel_vpp_ipsec_create()
