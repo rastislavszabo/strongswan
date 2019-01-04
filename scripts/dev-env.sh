@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Copyright (c) 2018 Cisco and/or its affiliates.
+# Copyright (c) 2018-2019 Cisco and/or its affiliates.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -173,7 +173,7 @@ start() {
   vpp_conf
 
   echo "info: starting docker containers"
-  (sudo docker run --name responder --hostname responder -d --net=host --privileged -it -e INITIAL_LOGLVL=debug -e ETCD_CONFIG=DISABLED -e KAFKA_CONFIG=DISABLED -v $VPP_CFG_DIR:/etc/vpp -v $AGENT_CFG_DIR:/opt/vpp-agent/dev ligato/vpp-agent:pantheon-dev && sudo docker run --name initiator --hostname initiator -d --privileged -v $INITIATOR_CFG_DIR:/conf -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan) 1> /dev/null
+  (sudo docker run --name responder --hostname responder -d --net=host --privileged -it -e INITIAL_LOGLVL=debug -e ETCD_CONFIG=DISABLED -e KAFKA_CONFIG=DISABLED -v $VPP_CFG_DIR:/etc/vpp -v $AGENT_CFG_DIR:/opt/vpp-agent/dev ligato/vpp-agent:$VPP_AGENT_VERSION && sudo docker run --name initiator --hostname initiator -d --privileged -v $INITIATOR_CFG_DIR:/conf -v $INITIATOR_CFG_DIR:/etc/ipsec.d philplckthun/strongswan) 1> /dev/null
   if [ $? -ne 0 ]; then
     echo "error: starting docker containers"
     exit 1
@@ -183,7 +183,15 @@ start() {
   sleep 2
 
   echo "info: configuring network"
-  (sudo ip link add wan0 type veth peer name wan1 && sudo ip link set netns $(sudo docker inspect --format '{{.State.Pid}}' initiator) dev wan1 && sudo docker exec initiator ip addr add 172.16.0.1/24 dev wan1 && sudo docker exec initiator ip link set wan1 up && sudo docker exec initiator iptables -t nat -F && sudo docker exec initiator ip addr add 10.10.20.1/24 dev lo && sudo docker exec initiator ip route add 10.10.10.0/24 dev wan1 src 10.10.20.1 && grpc_demo_setup) &> /dev/null
+  (sudo ip link add wan0 type veth peer name wan1 \
+    && sudo ip link set netns $(sudo docker inspect --format '{{.State.Pid}}' initiator) dev wan1 \
+    && sudo docker exec initiator ip addr add 172.16.0.1/24 dev wan1 \
+    && sudo docker exec initiator ip link set wan1 up \
+    && sudo docker exec initiator iptables -t nat -F \
+    && sudo docker exec initiator ip addr add 10.10.20.1/24 dev lo \
+    && sudo docker exec initiator ip route add 10.10.10.0/24 dev wan1 src 10.10.20.1 \
+    && grpc_demo_setup) 1> /dev/null
+
   if [ $? -ne 0 ]; then
     echo "error: configuring network"
     exit 1
