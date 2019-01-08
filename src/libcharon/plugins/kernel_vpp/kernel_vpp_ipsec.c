@@ -155,6 +155,11 @@ typedef struct {
      */
     bool esn;
 
+    /**
+     * Enable UDP encapsulation
+     */
+    bool udp_encap;
+
 } tunnel_t;
 
 /**
@@ -177,7 +182,7 @@ char *chunk_to_ipv4(chunk_t address)
         return NULL;
     }
 
-    memcpy(&(addr.s_addr), address.ptr, IPV4_SZ); 
+    memcpy(&(addr.s_addr), address.ptr, IPV4_SZ);
     if (inet_ntop(AF_INET, &addr, ipv4, INET_ADDRSTRLEN * sizeof(char)) == NULL)
     {
         free(ipv4);
@@ -217,11 +222,11 @@ static void free_tunnel(tunnel_t *tunnel)
 static void dump_tunnel(tunnel_t *tp)
 {
     const char *q = "NULL";
-    DBG1(DBG_KNL, "if_name: %s, un_if_name: %s, src_spi: %u, dst_spi: %u, " \
-                  "src_addr: %s, dst_addr: %s, enc_alg: %d, int_alg: %d, " \
-                  "src_enc_key: %s, dst_enc_key: %s, " \
-                  "src_int_key: %s, dst_int_key: %s, " \
-                  "esn: %d",
+    DBG1(DBG_KNL, "if_name: %s, un_if_name: %s, src_spi: %u, dst_spi: %u, "
+                  "src_addr: %s, dst_addr: %s, enc_alg: %d, int_alg: %d, "
+                  "src_enc_key: %s, dst_enc_key: %s, "
+                  "src_int_key: %s, dst_int_key: %s, "
+                  "esn: %d, udp_encap: %d",
                   tp->if_name ? tp->if_name : q, 
                   tp->un_if_name ? tp->un_if_name : q,
                   tp->src_spi, tp->dst_spi,
@@ -232,7 +237,7 @@ static void dump_tunnel(tunnel_t *tp)
                   tp->dst_enc_key ? tp->dst_enc_key : q,
                   tp->src_int_key ? tp->src_int_key : q,
                   tp->dst_int_key ? tp->dst_int_key : q,
-                  tp->esn);
+                  tp->esn, tp->udp_encap);
 }
 
 /**
@@ -337,7 +342,7 @@ static status_t delete_tunnel(tunnel_t *tp)
 
     tunnel.name = tp->if_name;
 
-    rc = vac->del(vac, &req, &rsp); 
+    rc = vac->del(vac, &req, &rsp);
     if (rc == FAILED)
     {
         DBG1(DBG_KNL, "kernel_vpp: error communicating with grpc");
@@ -360,7 +365,6 @@ static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
     host_t *dst_net;
     uint8_t pfx_len;
     status_t rc = SUCCESS;
-    
 
     if ((data->type != POLICY_IPSEC) || !data->sa ||
         (data->sa->mode != MODE_TUNNEL))
@@ -369,8 +373,7 @@ static status_t vpp_add_del_route(private_kernel_vpp_ipsec_t *this,
         return NOT_SUPPORTED;
     }
 
-    // we ignore POLICY_IN
-    // because we use this call ony for setting up routes
+    /* we ignore POLICY_IN because we use this call ony for setting up routes */
     if (id->dir != POLICY_OUT)
     {
         DBG1(DBG_KNL, "kernel_vpp: ingoring POLICY_IN, routes set in "
@@ -463,16 +466,17 @@ static status_t create_tunnel(tunnel_t *tp)
     tunnel.has_remote_spi = TRUE;
     tunnel.has_integ_alg = TRUE;
     tunnel.has_crypto_alg = TRUE;
+    tunnel.has_enable_udp_encap = TRUE;
 
     tunnel.esn = tp->esn;
     tunnel.name = tp->if_name;
-
+    tunnel.enable_udp_encap = tp->udp_encap;
     tunnel.enabled = TRUE;
     tunnel.unnumbered_name = tp->un_if_name;
 
     tunnel.integ_alg = tp->int_alg;
     tunnel.crypto_alg = tp->enc_alg;
-    
+
     tunnel.local_ip = tp->src_addr;
     tunnel.local_spi = tp->src_spi;
     tunnel.local_integ_key = tp->src_int_key;
@@ -482,8 +486,8 @@ static status_t create_tunnel(tunnel_t *tp)
     tunnel.remote_spi = tp->dst_spi;
     tunnel.remote_integ_key = tp->dst_int_key;
     tunnel.remote_crypto_key = tp->dst_enc_key;
-    
-    rc = vac->put(vac, &req, &rsp); 
+
+    rc = vac->put(vac, &req, &rsp);
     if (rc == FAILED)
     {
         DBG1(DBG_KNL, "kernel_vpp: error communicating with grpc");
@@ -522,7 +526,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
         return NOT_SUPPORTED;
     }
 
-    // inbound SA comes first
+     /* inbound SA comes first */
     if (data->inbound)
     {
         rc = convert_enc_alg(data->enc_alg, data->enc_key, &vpp_enc_alg);
@@ -559,6 +563,7 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
 
         INIT(tunnel,
                .esn = data->esn,
+               .udp_encap = data->encap,
                .if_name = if_name,
                .un_if_name = un_if_name,
                .dst_spi = ntohl(id->spi),
