@@ -501,7 +501,7 @@ static status_t create_tunnel(tunnel_t *tp)
 /**
  * Add an SA to the SAD.
  *
- * This function is called with a single SA for a signle protocol
+ * This function is called with a single SA for a single protocol
  * in one direction. To be able to install vpp tunnel we need one
  * SA for each direction (IN/OUT). Inbound SA comes first so we
  * cache it and wait for outbound SA before creating tunnel.

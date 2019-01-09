@@ -60,3 +60,4 @@ cd ${WS}
 echo "Building vpp-agent & grpc_demo_setup API C lib"
 cd ${WS}/third_party/vpp_agent_c_api
 (./autogen.sh && ./configure && make && sudo make install) 1>> $LOG
+sudo ldconfig

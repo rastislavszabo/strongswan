@@ -25,8 +25,8 @@
 #include <kernel_vpp_grpc.h>
 #include <ip_packet.h>
 
-#define SOCK_NAME_PORT "sock_path_port"
-#define SOCK_NAME_NATT "sock_path_natt"
+#define SOCK_NAME_PORT "sock_port_path"
+#define SOCK_NAME_NATT "sock_natt_path"
 
 #define SOCK_PATH_PORT "/etc/vpp/" SOCK_NAME_PORT
 #define SOCK_PATH_NATT "/etc/vpp/" SOCK_NAME_NATT
@@ -100,11 +100,21 @@ struct private_socket_vpp_socket_t {
      */
     vac_t *vac;
 
-    /*
+    /**
      * Helper varibale used for round-robin algorithm when receiving
      * from multiple sockets
      */
     int rr_index;
+
+    /**
+     * Socket registration retry thread
+     */
+    thread_t *reg_retry;
+
+    bool is_port_path_registered;
+    bool is_natt_path_registered;
+    char *sock_port_path;
+    char *sock_natt_path;
 };
 
 /**
@@ -389,21 +399,15 @@ static status_t set_addr_name(struct sockaddr_un *saddr, char *path)
     return SUCCESS;
 }
 
-static status_t bind_punt_socket(private_socket_vpp_socket_t *this,
-                                 struct sockaddr_un *saddr, char *path,
-                                 int port, int *out,
-                                 char *punt_name)
+static status_t create_read_socket(struct sockaddr_un *saddr,
+                                   char *path,
+                                   int port,
+                                   int *socket_out)
 {
     int sock;
 
     if (set_addr_name(saddr, path) != SUCCESS)
         return FAILED;
-
-    if (register_punt_socket(this->vac, port, path, punt_name) != SUCCESS)
-    {
-        DBG1(DBG_LIB, "socket_vpp: error registering punt socket");
-        return FAILED;
-    }
 
     sock = socket(AF_UNIX, SOCK_DGRAM, 0);
     if (sock < 0)
@@ -421,7 +425,7 @@ static status_t bind_punt_socket(private_socket_vpp_socket_t *this,
         return FAILED;
     }
 
-    *out = sock;
+    *socket_out = sock;
     return SUCCESS;
 }
 
@@ -468,13 +472,72 @@ out:
     return status;
 }
 
+static status_t register_paths(private_socket_vpp_socket_t *this)
+{
+    status_t status;
+
+    if (!this->is_port_path_registered)
+    {
+        status = register_punt_socket(this->vac,
+                this->port,
+                this->sock_port_path,
+                SOCK_NAME_PORT);
+        if (status == SUCCESS)
+        {
+            this->is_port_path_registered = TRUE;
+        }
+        else
+        {
+            DBG1(DBG_LIB, "socket_vpp: error registering punt socket");
+            return FAILED;
+        }
+    }
+
+    if (this->split)
+    {
+        if (!this->is_natt_path_registered)
+        {
+            status = register_punt_socket(this->vac,
+                    this->natt,
+                    this->sock_natt_path,
+                    SOCK_NAME_NATT);
+            if (status == SUCCESS)
+            {
+                this->is_natt_path_registered = TRUE;
+            }
+            else
+            {
+                DBG1(DBG_LIB, "socket_vpp: error registering NAT-T punt socket!");
+                return FAILED;
+            }
+        }
+    }
+
+    return SUCCESS;
+}
+
+static void *socket_vpp_register_thread(private_socket_vpp_socket_t *this)
+{
+    while (1)
+    {
+        if (SUCCESS == register_paths(this))
+        {
+            DBG2(DBG_LIB, "socket_vpp: socket register retry procedure complete");
+            return NULL;
+        }
+
+        DBG2(DBG_LIB, "socket_vpp: socket registration failed, retrying");
+        sleep(1);
+    }
+    return NULL;
+}
+
 /*
  * See header for description
  */
 socket_vpp_socket_t *socket_vpp_socket_create()
 {
     private_socket_vpp_socket_t *this;
-    char *sock_path_port, *sock_path_natt;
     char *write_path = NULL;
     status_t rc;
 
@@ -496,6 +559,14 @@ socket_vpp_socket_t *socket_vpp_socket_create()
         .natt = lib->settings->get_int(lib->settings, "%s.port_nat_t",
                     CHARON_NATT_PORT, lib->ns),
         .split = FALSE,
+        .is_natt_path_registered = FALSE,
+        .is_port_path_registered = FALSE,
+        .sock_port_path = lib->settings->get_str(lib->settings,
+                            "%s.plugins.socket-vpp.sock_port_path",
+                            SOCK_PATH_PORT, lib->ns),
+        .sock_natt_path = lib->settings->get_str(lib->settings,
+                            "%s.plugins.socket-vpp.sock_natt_path",
+                            SOCK_PATH_NATT, lib->ns),
         .rr_index = 0
     );
 
@@ -505,10 +576,9 @@ socket_vpp_socket_t *socket_vpp_socket_create()
         return NULL;
     }
 
-    // if port is specified in charon configuration
-    // both INIT and AUTH ikev2 packets will use custom
-    // port and not 500 for INIT and 4500 for AUTH ofc
-    // this happens only if NAT is detected.
+    /* If port is specified in charon configuration (different from default 500)
+       both INIT and AUTH ikev2 packets will use this custom port.
+       This happens only if NAT is detected. */
 
     if (this->port == 0 || this->natt == 0) {
         DBG1(DBG_LIB, "socket_vpp: random port allocation not supported!");
@@ -520,11 +590,8 @@ socket_vpp_socket_t *socket_vpp_socket_create()
         this->split = TRUE;
     }
 
-    sock_path_port = lib->settings->get_str(lib->settings,
-                        "%s.plugins.socket-vpp.sock_path_port",
-                        SOCK_PATH_PORT, lib->ns);
-    rc = bind_punt_socket(this, &this->addr_port, sock_path_port, this->port,
-                          &this->sock_port, SOCK_NAME_PORT);
+    rc = create_read_socket(&this->addr_port, this->sock_port_path, this->port,
+                          &this->sock_port);
     if (SUCCESS != rc)
     {
         DBG1(DBG_LIB, "socket_vpp: error binding socket!");
@@ -533,12 +600,8 @@ socket_vpp_socket_t *socket_vpp_socket_create()
 
     if (this->split)
     {
-        sock_path_natt = lib->settings->get_str(lib->settings,
-                          "%s.plugins.socket-vpp.sock_path_natt",
-                          SOCK_PATH_NATT, lib->ns);
-        rc = bind_punt_socket(this, &this->addr_natt, sock_path_natt,
-                              this->natt, &this->sock_natt,
-                              SOCK_NAME_NATT);
+        rc = create_read_socket(&this->addr_natt, this->sock_natt_path,
+                              this->natt, &this->sock_natt);
         if (SUCCESS != rc)
         {
             DBG1(DBG_LIB, "socket_vpp: error binding nat-t socket!");
@@ -546,6 +609,14 @@ socket_vpp_socket_t *socket_vpp_socket_create()
             return NULL;
         }
     }
+
+    DBG2(DBG_LIB, "socket_vpp: starting socket register retry procedure");
+    this->reg_retry = thread_create(
+            (thread_main_t)socket_vpp_register_thread, this);
+
+    /* keep waiting until registration is complete otherwise we cannot
+     * get write path from vpp */
+    this->reg_retry->join(this->reg_retry);
 
     rc = get_vpp_socket_path(this->vac, &write_path);
     if (SUCCESS != rc)
