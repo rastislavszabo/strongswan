@@ -25,7 +25,11 @@
 #include <kernel_vpp_grpc.h>
 #include <ip_packet.h>
 
-#define READ_PATH "/etc/vpp/strongswan-uds-socket"
+#define SOCK_NAME_PORT "sock_port_path"
+#define SOCK_NAME_NATT "sock_natt_path"
+
+#define SOCK_PATH_PORT "/etc/vpp/" SOCK_NAME_PORT
+#define SOCK_PATH_NATT "/etc/vpp/" SOCK_NAME_NATT
 
 typedef struct private_socket_vpp_socket_t private_socket_vpp_socket_t;
 typedef struct vpp_packetdesc_t vpp_packetdesc_t;
@@ -42,19 +46,9 @@ struct private_socket_vpp_socket_t {
     socket_vpp_socket_t public;
 
     /**
-     * Configured IKEv2 port
-     */
-    uint16_t port;
-
-    /**
      * maximum packet size to receive
      */
     int max_packet;
-
-    /**
-     * socket
-     */
-    int sock;
 
     /**
      * Write socket
@@ -62,11 +56,65 @@ struct private_socket_vpp_socket_t {
     struct sockaddr_un write_addr;
 
     /**
-     * Read socket
+     * Socket
      */
-    struct sockaddr_un read_addr;
+    int sock_port;
 
+    /**
+     * Socket for NAT-T
+     */
+    int sock_natt;
+
+    /**
+     * Configured IKEv2 port
+     */
+    uint16_t port;
+
+    /**
+     * Configured NAT-T port
+     */
+    uint16_t natt;
+
+    /**
+     * Port address
+     */
+    struct sockaddr_un addr_port;
+
+    /**
+     * NAT-T address. Used only when default ports are configured
+     */
+    struct sockaddr_un addr_natt;
+
+    /**
+     * When ikev2 init and auth
+     * are send to separate
+     * ports we would need
+     * to capture packets
+     * on both ports (500
+     * and 4500).
+     */
+    bool split;
+
+    /**
+     * VPP Agent client
+     */
     vac_t *vac;
+
+    /**
+     * Helper varibale used for round-robin algorithm when receiving
+     * from multiple sockets
+     */
+    int rr_index;
+
+    /**
+     * Socket registration retry thread
+     */
+    thread_t *reg_retry;
+
+    bool is_port_path_registered;
+    bool is_natt_path_registered;
+    char *sock_port_path;
+    char *sock_natt_path;
 };
 
 /**
@@ -103,28 +151,56 @@ struct ether_header_t {
 METHOD(socket_t, receiver, status_t,
     private_socket_vpp_socket_t *this, packet_t **out)
 {
+    int rr, ri, count, i, bytes_read = 0;
+    host_t *src = NULL, *dst = NULL;
     char buf[this->max_packet];
     packet_t *pkt;
-    host_t *src = NULL, *dst = NULL;
-    int bytes_read = 0;
     bool old;
+
     struct pollfd pfd[] = {
-            {.fd = this->sock, .events = POLLIN,},
+            {.fd = this->sock_port, .events = POLLIN },
+            {.fd = this->sock_natt, .events = POLLIN }
     };
 
-    DBG2(DBG_NET, "waiting for data on vpp sockets");
+    count =  this->split ? 2 : 1;
+
+    DBG2(DBG_NET, "socket_vpp: waiting for packets");
     old = thread_cancelability(TRUE);
-    if (poll(pfd, countof(pfd), -1) <= 0)
+    if (poll(pfd, count, -1) <= 0)
     {
         thread_cancelability(old);
-        DBG1(DBG_NET, "poll failed");
+        DBG1(DBG_NET, "socket_vpp: error polling sockets");
         return FAILED;
     }
     thread_cancelability(old);
 
-    if (pfd[0].revents & POLLIN)
+    ri = -1;
+    rr = ++this->rr_index;
+    this->rr_index = rr = (rr % count) != rr ? 0 : rr;
+
+    if (!(pfd[rr].revents & POLLIN))
+    {
+        // do 0 -> rr and rr -> count
+        for (i = 0; i < count; i++)
+        {
+            if (i == rr)
+                continue;
+            if (pfd[i].revents & POLLIN)
+            {
+                this->rr_index = ri = i;
+                break;
+            }
+        }
+    }
+    else
+    {
+        ri = rr;
+    }
+
+    if (ri >= 0)
     {
         struct msghdr msg;
+        memset(&msg, 0, sizeof(msg));
         struct iovec iov[3];
         vpp_packetdesc_t packetdesc;
         ether_header_t eh;
@@ -139,36 +215,35 @@ METHOD(socket_t, receiver, status_t,
         iov[2].iov_len = this->max_packet;
         msg.msg_iov = iov;
         msg.msg_iovlen = 3;
-        msg.msg_name = &this->read_addr;
-        msg.msg_namelen = sizeof(this->read_addr);
-        msg.msg_control = 0;
-        msg.msg_controllen = 0;
-        msg.msg_flags = 0;
 
-        bytes_read = recvmsg(pfd[0].fd, &msg, 0);
+        bytes_read = recvmsg(pfd[ri].fd, &msg, 0);
         if (bytes_read < 0)
         {
-            DBG1(DBG_NET, "error reading vpp socket: %s", strerror(errno));
+            DBG1(DBG_NET, "socket_vpp: error reading data '%s'",
+                 strerror(errno));
             return FAILED;
         }
-        DBG3(DBG_NET, "received vpp packet %b", buf, bytes_read);
+        DBG3(DBG_NET, "socket_vpp: received packet '%b'", buf, bytes_read);
 
         raw = chunk_create(buf, bytes_read);
         packet = ip_packet_create(raw);
         if (!packet)
         {
-            DBG1(DBG_NET, "invalid IP packet read from vpp socket");
+            DBG1(DBG_NET, "socket_vpp: invalid IP packet read from vpp socket");
         }
         src = packet->get_source(packet);
         dst = packet->get_destination(packet);
         pkt = packet_create();
         pkt->set_source(pkt, src);
         pkt->set_destination(pkt, dst);
-        DBG2(DBG_NET, "received vpp packet: from %#H to %#H", src, dst);
+
         data = packet->get_payload(packet);
+
         /* remove UDP header */
         data = chunk_skip(data, 8);
         pkt->set_data(pkt, chunk_clone(data));
+
+        DBG2(DBG_NET, "socket_vpp: received packet from %#H to %#H", src, dst);
     }
     else
     {
@@ -180,7 +255,7 @@ METHOD(socket_t, receiver, status_t,
 }
 
 METHOD(socket_t, sender, status_t,
-    private_socket_vpp_socket_t *this, packet_t *packet)
+       private_socket_vpp_socket_t *this, packet_t *packet)
 {
     struct msghdr msg;
     struct iovec iov[2];
@@ -233,10 +308,12 @@ METHOD(socket_t, sender, status_t,
     msg.msg_control = NULL;
     msg.msg_controllen = 0;
 
-    bytes_sent = sendmsg(this->sock, &msg, 0);
+    DBG1(DBG_NET, "kernel_vpp: write addr: %s", this->write_addr.sun_path);
+
+    bytes_sent = sendmsg(this->sock_port, &msg, 0);
     if (bytes_sent < 0)
     {
-        DBG1(DBG_NET, "error writing to vpp socket: %s", strerror(errno));
+        DBG1(DBG_NET, "kernel_vpp: error writing: %s", strerror(errno));
         return FAILED;
     }
 
@@ -246,7 +323,7 @@ METHOD(socket_t, sender, status_t,
 METHOD(socket_t, get_port, uint16_t,
     private_socket_vpp_socket_t *this, bool nat)
 {
-    return this->port;
+    return nat ? this->split ? this->port : this->natt : this->port;
 }
 
 METHOD(socket_t, supported_families, socket_family_t,
@@ -258,59 +335,98 @@ METHOD(socket_t, supported_families, socket_family_t,
 METHOD(socket_t, destroy, void,
     private_socket_vpp_socket_t *this)
 {
-    close(this->sock);
-    unlink(this->read_addr.sun_path);
+    if (this->split)
+    {
+        close(this->sock_natt);
+        unlink(this->addr_natt.sun_path);
+    }
+    close(this->sock_port);
+    unlink(this->addr_port.sun_path);
     free(this);
 }
 
-static status_t create_and_bind_socket(private_socket_vpp_socket_t *this,
-        const char *write_path, const char *read_path)
+static status_t register_punt_socket(vac_t *vac,
+                                     uint16_t port,
+                                     char *read_path,
+                                     char *name)
 {
-    status_t status = FAILED;
-    memset(&this->write_addr, 0, sizeof(this->write_addr));
-    strncpy(this->write_addr.sun_path, write_path,
-            sizeof(this->write_addr.sun_path));
+    Rpc__DataRequest rq = RPC__DATA_REQUEST__INIT;
+    Punt__Punt punt = PUNT__PUNT__INIT;
+    Rpc__PutResponse *rp = NULL;
+    Punt__Punt *punts[1];
 
-    if (this->write_addr.sun_path[sizeof(this->write_addr.sun_path) - 1] != '\0')
+    punt.has_port = 1;
+    punt.has_l3_protocol = 1;
+    punt.has_l4_protocol = 1;
+
+    punt.name = name;
+    punt.port = port;
+    punt.socket_path = read_path;
+    punt.l3_protocol = PUNT__L3_PROTOCOL__ALL;
+    punt.l4_protocol = PUNT__L4_PROTOCOL__UDP;
+
+    rq.n_punts = 1;
+    rq.punts = punts;
+    rq.punts[0] = &punt;
+
+    /* Register punt socket for IKEv2 port in VPP */
+    if (vac->put(vac, &rq, &rp) != SUCCESS)
     {
-        /* path was truncated */
-        DBG1(DBG_LIB, "write socket path is too long!");
-        goto out;
+        DBG1(DBG_LIB, "socket_vpp: register punt socket faield!");
+        return FAILED;
+    }
+    if (rp)
+        rpc__put_response__free_unpacked(rp, 0);
+    return SUCCESS;
+}
+
+static status_t set_addr_name(struct sockaddr_un *saddr, char *path)
+{
+    size_t len = strlen(path);
+    DBG1(DBG_LIB, "socket_vpp: path: %s", path);
+
+    if (sizeof(saddr->sun_path) <= len)
+    {
+        DBG1(DBG_LIB, "socket_vpp: socket path is too long");
+        return FAILED;
     }
 
-    this->write_addr.sun_family = AF_UNIX;
+    memset(saddr, 0, sizeof(*saddr));
 
-    memset(&this->read_addr, 0, sizeof(this->read_addr));
-    strncpy(this->read_addr.sun_path, read_path,
-            sizeof(this->read_addr.sun_path));
+    strncpy(saddr->sun_path, path, len);
+    saddr->sun_family = AF_UNIX;
 
-    if (this->read_addr.sun_path[sizeof(this->read_addr.sun_path) - 1] != '\0')
+    return SUCCESS;
+}
+
+static status_t create_read_socket(struct sockaddr_un *saddr,
+                                   char *path,
+                                   int port,
+                                   int *socket_out)
+{
+    int sock;
+
+    if (set_addr_name(saddr, path) != SUCCESS)
+        return FAILED;
+
+    sock = socket(AF_UNIX, SOCK_DGRAM, 0);
+    if (sock < 0)
     {
-        /* path was truncated */
-        DBG1(DBG_LIB, "read socket path is too long!");
-        goto out;
-    }
-    this->read_addr.sun_family = AF_UNIX;
-
-    this->sock = socket(AF_UNIX, SOCK_DGRAM, 0);
-    if (this->sock < 0)
-    {
-        DBG1(DBG_LIB, "opening vpp socket failed: %m");
-        goto out;
-    }
-
-    unlink(this->read_addr.sun_path);
-    if (bind(this->sock, (struct sockaddr*)&this->read_addr,
-                sizeof(this->read_addr)) < 0)
-    {
-        DBG1(DBG_LIB, "binding vpp read socket failed: %m");
-        close(this->sock);
-        goto out;
+        DBG1(DBG_LIB, "socket_vpp: opening socket failed");
+        return FAILED;
     }
 
-    status = SUCCESS;
-out:
-    return status;
+    unlink(saddr->sun_path);
+    if (bind(sock, (struct sockaddr *)saddr,
+              sizeof(*saddr)) < 0)
+    {
+        close(sock);
+        DBG1(DBG_LIB, "socket_vpp: binding socket failed");
+        return FAILED;
+    }
+
+    *socket_out = sock;
+    return SUCCESS;
 }
 
 static status_t get_vpp_socket_path(vac_t *vac, char **path)
@@ -329,10 +445,9 @@ static status_t get_vpp_socket_path(vac_t *vac, char **path)
     if (!rp)
         goto out;
 
-    if (rp->n_punt_entries != 1)
+    if (rp->n_punt_entries < 1)
     {
-        DBG1(DBG_LIB, "expected a single punt entry, got: %d!",
-                rp->n_punt_entries);
+        DBG1(DBG_LIB, "expected punt entry, got none!");
         goto out;
     }
 
@@ -357,38 +472,64 @@ out:
     return status;
 }
 
-static status_t register_punt_socket(vac_t *vac,
-                                     uint16_t port,
-                                     char *read_path)
+static status_t register_paths(private_socket_vpp_socket_t *this)
 {
-    Rpc__DataRequest rq = RPC__DATA_REQUEST__INIT;
-    Rpc__PutResponse *rp = NULL;
     status_t status;
-    Punt__Punt punt = PUNT__PUNT__INIT;
 
-    rq.n_punts = 1;
-    rq.punts = calloc(1, sizeof(Punt__Punt *));
-    rq.punts[0] = &punt;
-
-    punt.has_l3_protocol = 1;
-    punt.l3_protocol = PUNT__L3_PROTOCOL__ALL;
-    punt.has_l4_protocol = 1;
-    punt.l4_protocol = PUNT__L4_PROTOCOL__UDP;
-    punt.has_port = 1;
-    punt.port = port;
-    punt.socket_path = read_path;
-
-    /* Register punt socket for IKEv2 port in VPP */
-    status = vac->put(vac, &rq, &rp);
-    if (status != SUCCESS)
+    if (!this->is_port_path_registered)
     {
-        DBG1(DBG_LIB, "register vpp ip punt socket faield!");
+        status = register_punt_socket(this->vac,
+                this->port,
+                this->sock_port_path,
+                SOCK_NAME_PORT);
+        if (status == SUCCESS)
+        {
+            this->is_port_path_registered = TRUE;
+        }
+        else
+        {
+            DBG1(DBG_LIB, "socket_vpp: error registering punt socket");
+            return FAILED;
+        }
     }
-    if (rp)
-        rpc__put_response__free_unpacked(rp, 0);
 
-    free(rq.punts);
-    return status;
+    if (this->split)
+    {
+        if (!this->is_natt_path_registered)
+        {
+            status = register_punt_socket(this->vac,
+                    this->natt,
+                    this->sock_natt_path,
+                    SOCK_NAME_NATT);
+            if (status == SUCCESS)
+            {
+                this->is_natt_path_registered = TRUE;
+            }
+            else
+            {
+                DBG1(DBG_LIB, "socket_vpp: error registering NAT-T punt socket!");
+                return FAILED;
+            }
+        }
+    }
+
+    return SUCCESS;
+}
+
+static void *socket_vpp_register_thread(private_socket_vpp_socket_t *this)
+{
+    while (1)
+    {
+        if (SUCCESS == register_paths(this))
+        {
+            DBG2(DBG_LIB, "socket_vpp: socket register retry procedure complete");
+            return NULL;
+        }
+
+        DBG2(DBG_LIB, "socket_vpp: socket registration failed, retrying");
+        sleep(1);
+    }
+    return NULL;
 }
 
 /*
@@ -397,8 +538,8 @@ static status_t register_punt_socket(vac_t *vac,
 socket_vpp_socket_t *socket_vpp_socket_create()
 {
     private_socket_vpp_socket_t *this;
-    char *read_path;
     char *write_path = NULL;
+    status_t rc;
 
     INIT(this,
         .public = {
@@ -410,43 +551,95 @@ socket_vpp_socket_t *socket_vpp_socket_create()
                 .destroy = _destroy,
             },
         },
-        .max_packet = lib->settings->get_int(lib->settings,
-                            "%s.max_packet", PACKET_MAX_DEFAULT, lib->ns),
+        .vac = lib->get(lib, "kernel-vpp-vac"),
+        .max_packet = lib->settings->get_int(lib->settings, "%s.max_packet",
+                                             PACKET_MAX_DEFAULT, lib->ns),
         .port = lib->settings->get_int(lib->settings, "%s.port",
-                            CHARON_UDP_PORT, lib->ns),
+                    CHARON_UDP_PORT, lib->ns),
+        .natt = lib->settings->get_int(lib->settings, "%s.port_nat_t",
+                    CHARON_NATT_PORT, lib->ns),
+        .split = FALSE,
+        .is_natt_path_registered = FALSE,
+        .is_port_path_registered = FALSE,
+        .sock_port_path = lib->settings->get_str(lib->settings,
+                            "%s.plugins.socket-vpp.sock_port_path",
+                            SOCK_PATH_PORT, lib->ns),
+        .sock_natt_path = lib->settings->get_str(lib->settings,
+                            "%s.plugins.socket-vpp.sock_natt_path",
+                            SOCK_PATH_NATT, lib->ns),
+        .rr_index = 0
     );
 
-    read_path = lib->settings->get_str(lib->settings,
-                        "%s.plugins.socket-vpp.path", READ_PATH, lib->ns);
-
-    this->vac = lib->get(lib, "kernel-vpp-vac");
     if (!this->vac)
     {
-        DBG1(DBG_LIB, "no vac available (plugin missing?)");
+        DBG1(DBG_LIB, "socket_vpp: vac not available (missing plugin?)");
         return NULL;
     }
 
-    DBG2(DBG_LIB, "socket: read_path: %s", read_path);
+    /* If port is specified in charon configuration (different from default 500)
+       both INIT and AUTH ikev2 packets will use this custom port.
+       This happens only if NAT is detected. */
 
-    status_t status = register_punt_socket(this->vac, this->port, read_path);
-    if (SUCCESS != status)
+    if (this->port == 0 || this->natt == 0) {
+        DBG1(DBG_LIB, "socket_vpp: random port allocation not supported!");
         return NULL;
+    }
 
-    status = get_vpp_socket_path(this->vac, &write_path);
-    if (SUCCESS != status)
-        return NULL;
-
-    DBG2(DBG_LIB, "socket: write_path: %s", write_path);
-
-    status = create_and_bind_socket(this, write_path, read_path);
-    if (SUCCESS != status)
+    if (this->port == IKEV2_UDP_PORT)
     {
+        this->split = TRUE;
+    }
+
+    rc = create_read_socket(&this->addr_port, this->sock_port_path, this->port,
+                          &this->sock_port);
+    if (SUCCESS != rc)
+    {
+        DBG1(DBG_LIB, "socket_vpp: error binding socket!");
+        return NULL;
+    }
+
+    if (this->split)
+    {
+        rc = create_read_socket(&this->addr_natt, this->sock_natt_path,
+                              this->natt, &this->sock_natt);
+        if (SUCCESS != rc)
+        {
+            DBG1(DBG_LIB, "socket_vpp: error binding nat-t socket!");
+            close(this->sock_port);
+            return NULL;
+        }
+    }
+
+    DBG2(DBG_LIB, "socket_vpp: starting socket register retry procedure");
+    this->reg_retry = thread_create(
+            (thread_main_t)socket_vpp_register_thread, this);
+
+    /* keep waiting until registration is complete otherwise we cannot
+     * get write path from vpp */
+    this->reg_retry->join(this->reg_retry);
+
+    rc = get_vpp_socket_path(this->vac, &write_path);
+    if (SUCCESS != rc)
+    {
+        if (this->split)
+            close(this->sock_natt);
+        close(this->sock_port);
+        return NULL;
+    }
+
+    rc = set_addr_name(&this->write_addr, write_path);
+    if (SUCCESS != rc)
+    {
+        if (this->split)
+            close(this->sock_natt);
+        close(this->sock_port);
         free(write_path);
         return NULL;
     }
 
-    DBG2(DBG_LIB, "socket: all done and ok !!");
+    DBG2(DBG_LIB, "socket_vpp: success initializing plugin");
 
     free(write_path);
     return &this->public;
 }
+

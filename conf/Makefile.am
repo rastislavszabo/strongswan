@@ -88,6 +88,7 @@ plugins = \
 	plugins/revocation.opt \
 	plugins/save-keys.opt \
 	plugins/socket-default.opt \
+	plugins/socket-vpp.opt \
 	plugins/sql.opt \
 	plugins/stroke.opt \
 	plugins/systime-fix.opt \
