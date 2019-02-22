@@ -33,12 +33,10 @@ echo "Building gRPC"
 cd third_party/grpc
 git submodule update --init 1>> $LOG
 (CFLAGS="-Wno-implicit-fallthrough -Wno-stringop-overflow -Wno-error=conversion" make && sudo make install) 1>> $LOG
-cd ../../
-
-echo "Building Protobuf"
 cd third_party/protobuf
-(./autogen.sh && ./configure && make && sudo make install) 1>> $LOG
-sudo ldconfig
+make
+sudo make install
+cd ../../
 cd ../../
 
 echo "Building protobuf-c"
@@ -49,7 +47,12 @@ cd ../../
 mkdir build -p; cd build
 (../configure && make && sudo make install) 1>> $LOG
 
-echo "Generating app-agent API files"
+echo "Building hiredis"
+cd ${WS}/third_party/hiredis
+git submodule update --init 1>> $LOG
+make && sudo make install
+
+echo "Generating vpp-agent API files"
 cd ${WS}/third_party/vpp-agent
 git submodule update --init 1>> $LOG
 git checkout dev 1>> $LOG
@@ -57,7 +60,7 @@ git checkout dev 1>> $LOG
 cd ${WS}
 ./gen_api.sh
 
-echo "Building vpp-agent & grpc_demo_setup API C lib"
+echo "Building vpp-agent API C lib"
 cd ${WS}/third_party/vpp_agent_c_api
 (./autogen.sh && ./configure && make && sudo make install) 1>> $LOG
 sudo ldconfig

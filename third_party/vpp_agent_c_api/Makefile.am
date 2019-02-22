@@ -1,12 +1,16 @@
 
+SUBDIRS = test
+
 ACLOCAL_AMFLAGS = -I m4
 
 lib_LTLIBRARIES = libvpp-agent-api.la
 
-AM_CFLAGS = -I$(top_srcdir)/models -I$(top_srcdir)/configurator -Wall -Wextra
+AM_CFLAGS = -I$(top_srcdir)/models -I$(top_srcdir)/configurator -Wall -Wextra -Og
 
 libvpp_agent_api_la_SOURCES = \
 	configurator/configurator.grpc-c.c \
+	vaa_json.c vaa_json.h \
+	nxjson.c nxjson.h \
 	models/linux/linux.grpc-c.c \
 	models/linux/interfaces/interface.grpc-c.c \
 	models/linux/l3/route.grpc-c.c \
@@ -30,8 +34,9 @@ libvpp_agent_api_la_SOURCES = \
 
 libvpp_agent_api_la_LIBADD = -lgpr -lgrpc -lprotobuf-c -lprotobuf -lprotobuf-c
 
-bin_PROGRAMS = grpc_demo_setup
+bin_PROGRAMS = sswan_vpp_test
 
-grpc_demo_setup_SOURCES = grpc_demo_setup.c
+sswan_vpp_test_SOURCES = sswan_vpp_test.c
 
-grpc_demo_setup_LDADD = -lvpp-agent-api -lgrpc -lgrpc-c -lprotobuf -lprotobuf
+sswan_vpp_test_LDADD = -lvpp-agent-api -lgrpc -lgrpc-c -lprotobuf -lprotobuf \
+		-lhiredis
