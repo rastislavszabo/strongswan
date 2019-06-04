@@ -55,7 +55,7 @@ make && sudo make install
 echo "Generating vpp-agent API files"
 cd ${WS}/third_party/vpp-agent
 git submodule update --init 1>> $LOG
-git checkout v2.1.0 1>> $LOG
+git checkout vpp1908 1>> $LOG
 
 cd ${WS}
 ./gen_api.sh
