@@ -19,6 +19,7 @@ libvpp_agent_api_la_SOURCES = \
 	models/vpp/interfaces/state.grpc-c.c \
 	models/vpp/vpp.grpc-c.c \
 	models/vpp/acl/acl.grpc-c.c \
+	models/vpp/abf/abf.grpc-c.c \
 	models/vpp/interfaces/interface.grpc-c.c \
 	models/vpp/l2/bridge-domain.grpc-c.c \
 	models/vpp/l2/fib.grpc-c.c \
