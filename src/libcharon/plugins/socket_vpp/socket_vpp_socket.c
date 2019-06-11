@@ -364,13 +364,6 @@ static status_t register_punt_socket(vac_t *vac,
     punt.l3_protocol = VPP__PUNT__L3_PROTOCOL__ALL;
     punt.l4_protocol = VPP__PUNT__L4_PROTOCOL__UDP;
 
-    /* Register punt socket for IKEv2 port in VPP */
-    if (vac->update_punt_socket(vac, &punt, TRUE) != SUCCESS)
-    {
-        DBG1(DBG_LIB, "socket_vpp: register punt socket faield!");
-        return FAILED;
-    }
-
     if (port == 4500)
     {
         excs[0] = &ipsec4_spi0;
@@ -388,6 +381,15 @@ static status_t register_punt_socket(vac_t *vac,
         if (vac->update_punt_exception(vac, excs, 3, TRUE) != SUCCESS)
         {
             DBG1(DBG_LIB, "socket_vpp: adding punt exceptions failed!");
+            return FAILED;
+        }
+    } 
+    else 
+    {
+        /* Register punt socket for IKEv2 port in VPP */
+        if (vac->update_punt_socket(vac, &punt, TRUE) != SUCCESS)
+        {
+            DBG1(DBG_LIB, "socket_vpp: register punt socket faield!");
             return FAILED;
         }
     }
