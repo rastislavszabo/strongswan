@@ -171,6 +171,34 @@ METHOD(vac_t, vac_update_vpp_interface, status_t, private_vac_t *this,
     return SUCCESS;
 }
 
+METHOD(vac_t, vac_update_punt_exception, status_t, private_vac_t *this,
+        Vpp__Punt__Exception **excs, int n_exceptions, int is_add)
+{
+    status_t rc;
+    if (this->public.is_grpc_channel)
+    {
+        DEFINE_COMMON_PROTOS;
+
+        data.punt_exceptions = excs;
+        data.n_punt_exceptions = n_exceptions;
+
+        if (is_add)
+            rc = rpc_call(&upd_rq, &upd_rp, update);
+        else
+            rc = rpc_call(&del_rq, &del_rp, delete);
+
+        if (SUCCESS != rc)
+            return FAILED;
+
+        if (is_add)
+            configurator__update_response__free_unpacked(upd_rp, 0);
+        else
+            configurator__delete_response__free_unpacked(del_rp, 0);
+    }
+
+    return SUCCESS;
+}
+
 METHOD(vac_t, vac_update_punt_socket, status_t, private_vac_t *this,
         Vpp__Punt__ToHost *punt, int is_add)
 {
@@ -454,6 +482,7 @@ vac_t *vac_create(char *name)
             .register_events = _vac_register_events,
             .update_vpp_interface = _vac_update_vpp_interface,
             .update_punt_socket = _vac_update_punt_socket,
+            .update_punt_exception = _vac_update_punt_exception,
             .update_route = _vac_update_route,
             .is_grpc_channel = 1,
         },

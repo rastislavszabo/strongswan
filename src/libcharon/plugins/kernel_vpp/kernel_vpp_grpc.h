@@ -46,6 +46,9 @@ struct vac_t {
     status_t (*update_punt_socket)(vac_t *this,
             Vpp__Punt__ToHost *punt, int is_add);
 
+    status_t (*update_punt_exception)(vac_t *this,
+            Vpp__Punt__Exception **excs, int n_exceptions, int is_add);
+
     status_t (*update_route)(vac_t *this,
             Vpp__L3__Route *route, int is_add);
 

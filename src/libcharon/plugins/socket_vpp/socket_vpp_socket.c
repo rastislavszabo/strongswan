@@ -350,6 +350,10 @@ static status_t register_punt_socket(vac_t *vac,
                                      char *read_path)
 {
     Vpp__Punt__ToHost punt = VPP__PUNT__TO_HOST__INIT;
+    Vpp__Punt__Exception *excs[3];
+    Vpp__Punt__Exception ipsec4_spi0 = VPP__PUNT__EXCEPTION__INIT;
+    Vpp__Punt__Exception ipsec6_spi0 = VPP__PUNT__EXCEPTION__INIT;
+    Vpp__Punt__Exception ipsec4_o_udp_spi0 = VPP__PUNT__EXCEPTION__INIT;
 
     punt.has_port = 1;
     punt.has_l3_protocol = 1;
@@ -366,6 +370,28 @@ static status_t register_punt_socket(vac_t *vac,
         DBG1(DBG_LIB, "socket_vpp: register punt socket faield!");
         return FAILED;
     }
+
+    if (port == 4500)
+    {
+        excs[0] = &ipsec4_spi0;
+        excs[1] = &ipsec6_spi0;
+        excs[2] = &ipsec4_o_udp_spi0;
+
+        ipsec4_spi0.reason = "ipsec4-spi-0";
+        ipsec6_spi0.reason = "ipsec6-spi-0";
+        ipsec4_o_udp_spi0.reason = "ipsec4-spi-o-udp-0";
+
+        ipsec4_spi0.socket_path = read_path;
+        ipsec6_spi0.socket_path = read_path;
+        ipsec4_o_udp_spi0.socket_path = read_path;
+
+        if (vac->update_punt_exception(vac, excs, 3, TRUE) != SUCCESS)
+        {
+            DBG1(DBG_LIB, "socket_vpp: adding punt exceptions failed!");
+            return FAILED;
+        }
+    }
+
     return SUCCESS;
 }
 
