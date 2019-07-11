@@ -281,6 +281,7 @@ static bool lookup_uid_gid()
 	return TRUE;
 }
 
+#ifndef DISABLE_SIGNAL_HANDLER
 /**
  * Handle SIGSEGV/SIGILL signals raised by threads
  */
@@ -297,6 +298,7 @@ static void segv_handler(int signal)
 	DBG1(DBG_DMN, "killing ourself, received critical signal");
 	abort();
 }
+#endif /* DISABLE_SIGNAL_HANDLER */
 
 /**
  * Add namespace alias
@@ -322,6 +324,7 @@ int main(int argc, char *argv[])
 {
 	struct sigaction action;
 	struct utsname utsname;
+	int status = SS_RC_INITIALIZATION_FAILED;
 
 	dbg = dbg_stderr;
 
@@ -345,16 +348,15 @@ int main(int argc, char *argv[])
 		sd_notifyf(0, "STATUS=integrity check of charon-systemd failed");
 		return SS_RC_INITIALIZATION_FAILED;
 	}
-	atexit(libcharon_deinit);
 	if (!libcharon_init())
 	{
 		sd_notifyf(0, "STATUS=libcharon initialization failed");
-		return SS_RC_INITIALIZATION_FAILED;
+		goto error;
 	}
 	if (!lookup_uid_gid())
 	{
 		sd_notifyf(0, "STATUS=unknown uid/gid");
-		return SS_RC_INITIALIZATION_FAILED;
+		goto error;
 	}
 	/* we registered the journal logger as custom logger, which gets its
 	 * settings from <ns>.customlog.journal, let it fallback to <ns>.journal */
@@ -370,27 +372,32 @@ int main(int argc, char *argv[])
 			lib->settings->get_str(lib->settings, "%s.load", PLUGINS, lib->ns)))
 	{
 		sd_notifyf(0, "STATUS=charon initialization failed");
-		return SS_RC_INITIALIZATION_FAILED;
+		goto error;
 	}
 	lib->plugins->status(lib->plugins, LEVEL_CTRL);
 
 	if (!lib->caps->drop(lib->caps))
 	{
 		sd_notifyf(0, "STATUS=dropping capabilities failed");
-		return SS_RC_INITIALIZATION_FAILED;
+		goto error;
 	}
 
-	/* add handler for SEGV and ILL,
+	/* add handler for fatal signals,
 	 * INT, TERM and HUP are handled by sigwaitinfo() in run() */
-	action.sa_handler = segv_handler;
 	action.sa_flags = 0;
 	sigemptyset(&action.sa_mask);
 	sigaddset(&action.sa_mask, SIGINT);
 	sigaddset(&action.sa_mask, SIGTERM);
 	sigaddset(&action.sa_mask, SIGHUP);
+
+	/* optionally let the external system handle fatal signals */
+#ifndef DISABLE_SIGNAL_HANDLER
+	action.sa_handler = segv_handler;
 	sigaction(SIGSEGV, &action, NULL);
 	sigaction(SIGILL, &action, NULL);
 	sigaction(SIGBUS, &action, NULL);
+#endif /* DISABLE_SIGNAL_HANDLER */
+
 	action.sa_handler = SIG_IGN;
 	sigaction(SIGPIPE, &action, NULL);
 
@@ -401,5 +408,9 @@ int main(int argc, char *argv[])
 	sd_notifyf(0, "STATUS=charon-systemd running, strongSwan %s, %s %s, %s",
 			   VERSION, utsname.sysname, utsname.release, utsname.machine);
 
-	return run();
+	status = run();
+
+error:
+	libcharon_deinit();
+	return status;
 }

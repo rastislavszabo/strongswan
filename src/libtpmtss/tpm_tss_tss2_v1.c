@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2018 Tobias Brunner
- * Copyright (C) 2016-2018 Andreas Steffen
+ * Copyright (C) 2016-2019 Andreas Steffen
  * HSR Hochschule fuer Technik Rapperswil
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -22,6 +22,7 @@
 #include <asn1/asn1.h>
 #include <asn1/oid.h>
 #include <bio/bio_reader.h>
+#include <threading/mutex.h>
 
 #include <tpm20.h>
 
@@ -74,6 +75,11 @@ struct private_tpm_tss_tss2_t {
 	 * Is TPM FIPS 186-4 compliant ?
 	 */
 	bool fips_186_4;
+
+	/**
+	 * Mutex controlling access to the TPM 2.0 context
+	 */
+	mutex_t *mutex;
 
 };
 
@@ -168,8 +174,10 @@ static bool get_algs_capability(private_tpm_tss_tss2_t *this)
 	int written;
 
 	/* get fixed properties */
+	this->mutex->lock(this->mutex);
 	rval = Tss2_Sys_GetCapability(this->sys_context, 0, TPM_CAP_TPM_PROPERTIES,
 						PT_FIXED, MAX_TPM_PROPERTIES, &more_data, &cap_data, 0);
+	this->mutex->unlock(this->mutex);
 	if (rval != TPM_RC_SUCCESS)
 	{
 		DBG1(DBG_PTS, "%s GetCapability failed for TPM_CAP_TPM_PROPERTIES: 0x%06x",
@@ -222,8 +230,10 @@ static bool get_algs_capability(private_tpm_tss_tss2_t *this)
 		 fips_140_2 ? "FIPS 140-2" : (this->fips_186_4 ? "FIPS 186-4" : ""));
 
 	/* get supported algorithms */
+	this->mutex->lock(this->mutex);
 	rval = Tss2_Sys_GetCapability(this->sys_context, 0, TPM_CAP_ALGS,
 						0, TPM_PT_ALGORITHM_SET, &more_data, &cap_data, 0);
+	this->mutex->unlock(this->mutex);
 	if (rval != TPM_RC_SUCCESS)
 	{
 		DBG1(DBG_PTS, "%s GetCapability failed for TPM_CAP_ALGS: 0x%06x",
@@ -251,8 +261,10 @@ static bool get_algs_capability(private_tpm_tss_tss2_t *this)
 	DBG2(DBG_PTS, "%s algorithms:%s", LABEL, buf);
 
 	/* get supported ECC curves */
+	this->mutex->lock(this->mutex);
 	rval = Tss2_Sys_GetCapability(this->sys_context, 0, TPM_CAP_ECC_CURVES,
 						0, TPM_PT_LOADED_CURVES, &more_data, &cap_data, 0);
+	this->mutex->unlock(this->mutex);
 	if (rval != TPM_RC_SUCCESS)
 	{
 		DBG1(DBG_PTS, "%s GetCapability failed for TPM_ECC_CURVES: 0x%06x",
@@ -440,8 +452,10 @@ bool read_public(private_tpm_tss_tss2_t *this, TPMI_DH_OBJECT handle,
 	sessions_data.rspAuthsCount = 1;
 
 	/* read public key for a given object handle from TPM 2.0 NVRAM */
+	this->mutex->lock(this->mutex);
 	rval = Tss2_Sys_ReadPublic(this->sys_context, handle, 0, public, &name,
 							   &qualified_name, &sessions_data);
+	this->mutex->unlock(this->mutex);
 	if (rval != TPM_RC_SUCCESS)
 	{
 		DBG1(DBG_PTS, "%s could not read public key from handle 0x%08x: 0x%06x",
@@ -481,6 +495,7 @@ METHOD(tpm_tss_t, get_public, chunk_t,
 			TPM2B_PUBLIC_KEY_RSA *rsa;
 			TPMT_RSA_SCHEME *scheme;
 			chunk_t aik_exponent, aik_modulus;
+			uint32_t exponent;
 
 			scheme = &public.t.publicArea.parameters.rsaDetail.scheme;
 			sig_alg   = scheme->scheme;
@@ -488,7 +503,15 @@ METHOD(tpm_tss_t, get_public, chunk_t,
 
 			rsa = &public.t.publicArea.unique.rsa;
 			aik_modulus = chunk_create(rsa->t.buffer, rsa->t.size);
-			aik_exponent = chunk_from_chars(0x01, 0x00, 0x01);
+			exponent = public.t.publicArea.parameters.rsaDetail.exponent;
+			if (!exponent)
+			{
+				aik_exponent = chunk_from_chars(0x01, 0x00, 0x01);
+			}
+			else
+			{
+				aik_exponent = chunk_from_thing(exponent);
+			}
 
 			/* subjectPublicKeyInfo encoding of RSA public key */
 			if (!lib->encoding->encode(lib->encoding, PUBKEY_SPKI_ASN1_DER,
@@ -695,8 +718,10 @@ METHOD(tpm_tss_t, read_pcr, bool,
 	memset(&pcr_values, 0, sizeof(TPML_DIGEST));
 
 	/* read the PCR value */
+	this->mutex->lock(this->mutex);
 	rval = Tss2_Sys_PCR_Read(this->sys_context, 0, &pcr_selection,
 				&pcr_update_counter, &pcr_selection, &pcr_values, 0);
+	this->mutex->unlock(this->mutex);
 	if (rval != TPM_RC_SUCCESS)
 	{
 		DBG1(DBG_PTS, "%s PCR bank could not be read: 0x%60x",
@@ -791,8 +816,10 @@ METHOD(tpm_tss_t, extend_pcr, bool,
 	}
 
 	/* extend PCR */
+	this->mutex->lock(this->mutex);
 	rval = Tss2_Sys_PCR_Extend(this->sys_context, pcr_num, &sessions_data_cmd,
 							   &digest_values, &sessions_data_rsp);
+	this->mutex->unlock(this->mutex);
 	if (rval != TPM_RC_SUCCESS)
 	{
 		DBG1(DBG_PTS, "%s PCR %02u could not be extended: 0x%06x",
@@ -857,9 +884,11 @@ METHOD(tpm_tss_t, quote, bool,
 		return FALSE;
 	}
 
+	this->mutex->lock(this->mutex);
 	rval = Tss2_Sys_Quote(this->sys_context, aik_handle, &sessions_data_cmd,
 						  &qualifying_data, &scheme, &pcr_selection,  &quoted,
 						  &sig, &sessions_data_rsp);
+	this->mutex->unlock(this->mutex);
 	if (rval != TPM_RC_SUCCESS)
 	{
 		DBG1(DBG_PTS,"%s Tss2_Sys_Quote failed: 0x%06x", LABEL, rval);
@@ -1038,8 +1067,10 @@ METHOD(tpm_tss_t, sign, bool,
 		memcpy(buffer.t.buffer, data.ptr, data.len);
 		buffer.t.size = data.len;
 
+		this->mutex->lock(this->mutex);
 		rval = Tss2_Sys_Hash(this->sys_context, 0, &buffer, alg_id, hierarchy,
 							 &hash, &validation, 0);
+		this->mutex->unlock(this->mutex);
 		if (rval != TPM_RC_SUCCESS)
 		{
 			DBG1(DBG_PTS,"%s Tss2_Sys_Hash failed: 0x%06x", LABEL, rval);
@@ -1052,12 +1083,14 @@ METHOD(tpm_tss_t, sign, bool,
 	    TPM2B_AUTH null_auth;
 
 		null_auth.t.size = 0;
+		this->mutex->lock(this->mutex);
 		rval = Tss2_Sys_HashSequenceStart(this->sys_context, 0, &null_auth,
 										  alg_id, &sequence_handle, 0);
 		if (rval != TPM_RC_SUCCESS)
 		{
 			DBG1(DBG_PTS,"%s Tss2_Sys_HashSequenceStart failed: 0x%06x",
 				 LABEL, rval);
+			this->mutex->unlock(this->mutex);
 			return FALSE;
 		}
 
@@ -1074,6 +1107,7 @@ METHOD(tpm_tss_t, sign, bool,
 			{
 				DBG1(DBG_PTS,"%s Tss2_Sys_SequenceUpdate failed: 0x%06x",
 					 LABEL, rval);
+				this->mutex->unlock(this->mutex);
 				return FALSE;
 			}
 		}
@@ -1082,6 +1116,7 @@ METHOD(tpm_tss_t, sign, bool,
 		rval = Tss2_Sys_SequenceComplete(this->sys_context, sequence_handle,
 										 &sessions_data_cmd, &buffer, hierarchy,
 										 &hash, &validation, 0);
+		this->mutex->unlock(this->mutex);
 		if (rval != TPM_RC_SUCCESS)
 		{
 			DBG1(DBG_PTS,"%s Tss2_Sys_SequenceComplete failed: 0x%06x",
@@ -1090,8 +1125,10 @@ METHOD(tpm_tss_t, sign, bool,
 		}
 	}
 
+	this->mutex->lock(this->mutex);
 	rval = Tss2_Sys_Sign(this->sys_context, handle, &sessions_data_cmd, &hash,
 						 &sig_scheme, &validation, &sig, &sessions_data_rsp);
+	this->mutex->unlock(this->mutex);
 	if (rval != TPM_RC_SUCCESS)
 	{
 		DBG1(DBG_PTS,"%s Tss2_Sys_Sign failed: 0x%06x", LABEL, rval);
@@ -1161,7 +1198,9 @@ METHOD(tpm_tss_t, get_random, bool,
 	{
 		len = min(bytes, random_len);
 
+		this->mutex->lock(this->mutex);
 		rval = Tss2_Sys_GetRandom(this->sys_context, NULL, len, &random, NULL);
+		this->mutex->unlock(this->mutex);
 		if (rval != TSS2_RC_SUCCESS)
 		{
 			DBG1(DBG_PTS,"%s Tss2_Sys_GetRandom failed: 0x%06x", LABEL, rval);
@@ -1195,8 +1234,10 @@ METHOD(tpm_tss_t, get_data, bool,
 	TPMS_AUTH_RESPONSE *session_data_rsp_array[1];
 
 	/* query maximum TPM data transmission size */
+	this->mutex->lock(this->mutex);
 	rval = Tss2_Sys_GetCapability(this->sys_context, 0, TPM_CAP_TPM_PROPERTIES,
 				TPM_PT_NV_BUFFER_MAX, 1, &more_data, &cap_data, 0);
+	this->mutex->unlock(this->mutex);
 	if (rval != TPM_RC_SUCCESS)
 	{
 		DBG1(DBG_PTS,"%s Tss2_Sys_GetCapability failed for "
@@ -1207,8 +1248,10 @@ METHOD(tpm_tss_t, get_data, bool,
 						MAX_NV_BUFFER_SIZE);
 
 	/* get size of NV object */
+	this->mutex->lock(this->mutex);
 	rval = Tss2_Sys_NV_ReadPublic(this->sys_context, handle, 0, &nv_public,
 																&nv_name, 0);
+	this->mutex->unlock(this->mutex);
 	if (rval != TPM_RC_SUCCESS)
 	{
 		DBG1(DBG_PTS,"%s Tss2_Sys_NV_ReadPublic failed: 0x%06x", LABEL, rval);
@@ -1243,10 +1286,11 @@ METHOD(tpm_tss_t, get_data, bool,
 	/* read NV data a maximum data size block at a time */
 	while (nv_size > 0)
 	{
+		this->mutex->lock(this->mutex);
 		rval = Tss2_Sys_NV_Read(this->sys_context, hierarchy, handle,
 					&sessions_data_cmd, min(nv_size, max_data_size),
 					nv_offset, &nv_data, &sessions_data_rsp);
-
+		this->mutex->unlock(this->mutex);
 		if (rval != TPM_RC_SUCCESS)
 		{
 			DBG1(DBG_PTS,"%s Tss2_Sys_NV_Read failed: 0x%06x", LABEL, rval);
@@ -1265,6 +1309,7 @@ METHOD(tpm_tss_t, destroy, void,
 	private_tpm_tss_tss2_t *this)
 {
 	finalize_context(this);
+	this->mutex->destroy(this->mutex);
 	free(this);
 }
 
@@ -1291,6 +1336,7 @@ tpm_tss_t *tpm_tss_tss2_create()
 			.get_data = _get_data,
 			.destroy = _destroy,
 		},
+		.mutex = mutex_create(MUTEX_TYPE_DEFAULT),
 	);
 
 	available = initialize_tcti_tabrmd_context(this);
