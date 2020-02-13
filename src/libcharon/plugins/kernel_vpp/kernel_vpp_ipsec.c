@@ -81,6 +81,11 @@ struct private_kernel_vpp_ipsec_t {
      * Next tunnel index
      */
     uint32_t next_index;
+
+    /**
+     * Unnumbered interface name cache
+     */
+    char *un_if_name_cache;
 };
 
 /**
@@ -540,8 +545,17 @@ METHOD(kernel_ipsec_t, add_sa, status_t,
             return NOT_SUPPORTED;
         }
 
-        snprintf(buf, sizeof(buf), "%H", id->dst);
-        un_if_name = vac->get_if_name_by_ip(vac, buf);
+	this->mutex->lock(this->mutex);
+	if (this->un_if_name_cache != NULL) {
+	    un_if_name = this->un_if_name_cache;
+	} else {
+	    this->mutex->unlock(this->mutex);
+	    snprintf(buf, sizeof(buf), "%H", id->dst);
+	    un_if_name = vac->get_if_name_by_ip(vac, buf);
+	    this->mutex->lock(this->mutex);
+	    this->un_if_name_cache = un_if_name;
+	}
+	this->mutex->unlock(this->mutex);
         if (!un_if_name)
         {
             DBG1(DBG_KNL, "kernel_vpp: unable to get interface %s", buf);
