@@ -10,7 +10,7 @@ sudo apt-get -y install libgmp-dev automake autoconf libtool pkg-config gettext 
 git submodule update --init
 
 cd ${WS}/grpc
-git checkout v1.3.0
+git checkout v1.27.0
 git submodule update --init
 CFLAGS="-Wno-implicit-fallthrough -Wno-stringop-overflow -Wno-error=conversion" make
 sudo make install
