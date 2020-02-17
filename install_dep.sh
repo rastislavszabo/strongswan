@@ -5,7 +5,7 @@ set -e
 WS="`pwd`"
 
 sudo apt-get -y install libgmp-dev automake autoconf libtool pkg-config gettext \
-    perl python flex bison gperf protobuf-compiler libprotobuf-dev libprotoc-dev
+    perl python flex bison gperf
 
 git submodule update --init
 
